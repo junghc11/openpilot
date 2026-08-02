@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import json
+import math
+import time
+from dataclasses import dataclass
+
+
+PROTOCOL_VERSION = 1
+DEFAULT_MAX_LATENCY_MS = 300.0
+DEFAULT_CONNECTION_TIMEOUT_MS = 2_000.0
+DEFAULT_MAX_OBJECTS = 64
+MAX_RESULT_BYTES = 64 * 1024
+MAX_CLOCK_LEAD_MS = 50.0
+SUPPORTED_OBJECT_CLASSES = frozenset((
+  "person",
+  "bicycle",
+  "car",
+  "motorcycle",
+  "bus",
+  "truck",
+  "traffic light",
+  "stop sign",
+))
+
+
+class ExternalAIProtocolError(ValueError):
+  pass
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalAIObject:
+  class_id: int
+  class_name: str
+  confidence: float
+  x1: float
+  y1: float
+  x2: float
+  y2: float
+
+  @property
+  def center_x(self) -> float:
+    return (self.x1 + self.x2) * 0.5
+
+  @property
+  def center_y(self) -> float:
+    return (self.y1 + self.y2) * 0.5
+
+  @property
+  def width(self) -> float:
+    return self.x2 - self.x1
+
+  @property
+  def height(self) -> float:
+    return self.y2 - self.y1
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalAIResult:
+  protocol_version: int
+  frame_id: int
+  source_timestamp_monotonic_ns: int
+  phone_receive_timestamp_ns: int
+  inference_start_timestamp_ns: int
+  inference_end_timestamp_ns: int
+  model: str
+  backend: str
+  objects: tuple[ExternalAIObject, ...]
+  c3x_receive_timestamp_ns: int
+  latency_ms: float
+  inference_ms: float
+
+
+def _mapping(value: object, field: str) -> dict:
+  if not isinstance(value, dict):
+    raise ExternalAIProtocolError(f"{field} must be an object")
+  return value
+
+
+def _integer(value: object, field: str, *, minimum: int = 0) -> int:
+  if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+    raise ExternalAIProtocolError(f"{field} must be an integer >= {minimum}")
+  return value
+
+
+def _number(value: object, field: str, *, minimum: float, maximum: float) -> float:
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    raise ExternalAIProtocolError(f"{field} must be numeric")
+  parsed = float(value)
+  if not math.isfinite(parsed) or parsed < minimum or parsed > maximum:
+    raise ExternalAIProtocolError(f"{field} must be between {minimum} and {maximum}")
+  return parsed
+
+
+def _short_text(value: object, field: str, *, maximum_length: int = 64) -> str:
+  if not isinstance(value, str):
+    raise ExternalAIProtocolError(f"{field} must be text")
+  parsed = value.strip()
+  if not parsed or len(parsed) > maximum_length:
+    raise ExternalAIProtocolError(f"{field} must contain 1..{maximum_length} characters")
+  return parsed
+
+
+def _parse_object(value: object, index: int) -> ExternalAIObject:
+  item = _mapping(value, f"objects[{index}]")
+  class_name = _short_text(item.get("class_name"), f"objects[{index}].class_name").lower()
+  if class_name not in SUPPORTED_OBJECT_CLASSES:
+    raise ExternalAIProtocolError(f"objects[{index}].class_name is unsupported")
+  x1 = _number(item.get("x1"), f"objects[{index}].x1", minimum=0.0, maximum=1.0)
+  y1 = _number(item.get("y1"), f"objects[{index}].y1", minimum=0.0, maximum=1.0)
+  x2 = _number(item.get("x2"), f"objects[{index}].x2", minimum=0.0, maximum=1.0)
+  y2 = _number(item.get("y2"), f"objects[{index}].y2", minimum=0.0, maximum=1.0)
+  if x2 <= x1 or y2 <= y1:
+    raise ExternalAIProtocolError(f"objects[{index}] bounding box is empty or reversed")
+  return ExternalAIObject(
+    class_id=_integer(item.get("class_id"), f"objects[{index}].class_id"),
+    class_name=class_name,
+    confidence=_number(item.get("confidence"), f"objects[{index}].confidence", minimum=0.0, maximum=1.0),
+    x1=x1,
+    y1=y1,
+    x2=x2,
+    y2=y2,
+  )
+
+
+def parse_external_ai_result(
+    payload: bytes | bytearray | memoryview | str,
+    *,
+    now_monotonic_ns: int | None = None,
+    previous_frame_id: int | None = None,
+    max_latency_ms: float = DEFAULT_MAX_LATENCY_MS,
+    max_objects: int = DEFAULT_MAX_OBJECTS,
+) -> ExternalAIResult:
+  if isinstance(payload, str):
+    encoded_size = len(payload.encode("utf-8"))
+    raw_text = payload
+  elif isinstance(payload, (bytes, bytearray, memoryview)):
+    encoded_size = len(payload)
+    try:
+      raw_text = bytes(payload).decode("utf-8")
+    except UnicodeDecodeError as exc:
+      raise ExternalAIProtocolError("result is not valid UTF-8") from exc
+  else:
+    raise ExternalAIProtocolError("result payload must be bytes or text")
+  if encoded_size > MAX_RESULT_BYTES:
+    raise ExternalAIProtocolError(f"result exceeds {MAX_RESULT_BYTES} bytes")
+
+  try:
+    document = json.loads(raw_text)
+  except (json.JSONDecodeError, RecursionError) as exc:
+    raise ExternalAIProtocolError("result is not valid JSON") from exc
+  root = _mapping(document, "result")
+
+  protocol_version = _integer(root.get("protocol_version"), "protocol_version", minimum=1)
+  if protocol_version != PROTOCOL_VERSION:
+    raise ExternalAIProtocolError(f"unsupported protocol_version {protocol_version}")
+  frame_id = _integer(root.get("frame_id"), "frame_id")
+  if previous_frame_id is not None and frame_id <= previous_frame_id:
+    raise ExternalAIProtocolError("frame_id did not advance")
+
+  source_ns = _integer(root.get("source_timestamp_monotonic_ns"), "source_timestamp_monotonic_ns", minimum=1)
+  phone_receive_ns = _integer(root.get("phone_receive_timestamp_ns"), "phone_receive_timestamp_ns", minimum=1)
+  inference_start_ns = _integer(root.get("inference_start_timestamp_ns"), "inference_start_timestamp_ns", minimum=1)
+  inference_end_ns = _integer(root.get("inference_end_timestamp_ns"), "inference_end_timestamp_ns", minimum=1)
+  if not phone_receive_ns <= inference_start_ns <= inference_end_ns:
+    raise ExternalAIProtocolError("phone inference timestamps are out of order")
+
+  now_ns = time.monotonic_ns() if now_monotonic_ns is None else _integer(now_monotonic_ns, "now_monotonic_ns", minimum=1)
+  latency_ms = (now_ns - source_ns) / 1_000_000.0
+  if latency_ms < -MAX_CLOCK_LEAD_MS:
+    raise ExternalAIProtocolError("source timestamp is in the future")
+  if not math.isfinite(max_latency_ms) or max_latency_ms <= 0.0:
+    raise ValueError("max_latency_ms must be positive")
+  if latency_ms > max_latency_ms:
+    raise ExternalAIProtocolError("result exceeded maximum latency")
+
+  if isinstance(max_objects, bool) or not isinstance(max_objects, int) or max_objects < 0:
+    raise ValueError("max_objects must be a non-negative integer")
+  object_values = root.get("objects")
+  if not isinstance(object_values, list):
+    raise ExternalAIProtocolError("objects must be an array")
+  if len(object_values) > max_objects:
+    raise ExternalAIProtocolError("result exceeded maximum object count")
+  objects = tuple(_parse_object(value, index) for index, value in enumerate(object_values))
+
+  return ExternalAIResult(
+    protocol_version=protocol_version,
+    frame_id=frame_id,
+    source_timestamp_monotonic_ns=source_ns,
+    phone_receive_timestamp_ns=phone_receive_ns,
+    inference_start_timestamp_ns=inference_start_ns,
+    inference_end_timestamp_ns=inference_end_ns,
+    model=_short_text(root.get("model"), "model"),
+    backend=_short_text(root.get("backend"), "backend"),
+    objects=objects,
+    c3x_receive_timestamp_ns=now_ns,
+    latency_ms=latency_ms,
+    inference_ms=(inference_end_ns - inference_start_ns) / 1_000_000.0,
+  )
+
+
+class ExternalAIResultTracker:
+  def __init__(
+      self,
+      *,
+      max_latency_ms: float = DEFAULT_MAX_LATENCY_MS,
+      connection_timeout_ms: float = DEFAULT_CONNECTION_TIMEOUT_MS,
+      max_objects: int = DEFAULT_MAX_OBJECTS,
+  ) -> None:
+    if not math.isfinite(connection_timeout_ms) or connection_timeout_ms <= 0.0:
+      raise ValueError("connection_timeout_ms must be positive")
+    self.max_latency_ms = max_latency_ms
+    self.connection_timeout_ns = int(connection_timeout_ms * 1_000_000.0)
+    self.max_objects = max_objects
+    self.last_result: ExternalAIResult | None = None
+    self.last_receive_timestamp_ns: int | None = None
+
+  def accept(self, payload: bytes | str, *, now_monotonic_ns: int | None = None) -> ExternalAIResult:
+    now_ns = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+    previous_frame_id = self.last_result.frame_id if self.last_result is not None else None
+    result = parse_external_ai_result(
+      payload,
+      now_monotonic_ns=now_ns,
+      previous_frame_id=previous_frame_id,
+      max_latency_ms=self.max_latency_ms,
+      max_objects=self.max_objects,
+    )
+    self.last_result = result
+    self.last_receive_timestamp_ns = now_ns
+    return result
+
+  def connected(self, *, now_monotonic_ns: int | None = None) -> bool:
+    if self.last_receive_timestamp_ns is None:
+      return False
+    now_ns = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+    return 0 <= now_ns - self.last_receive_timestamp_ns <= self.connection_timeout_ns
+
+  def fresh_result(self, *, now_monotonic_ns: int | None = None) -> ExternalAIResult | None:
+    return self.last_result if self.connected(now_monotonic_ns=now_monotonic_ns) else None
