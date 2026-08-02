@@ -58,6 +58,7 @@ class UIState:
         "liveParameters",
         "rawAudioData",
         "carrotMan",
+        "phoneAIState",
         "peripheralState",
         "liveDelay",
         "liveTorqueParameters",

@@ -8,6 +8,7 @@ from openpilot.selfdrive.ui.carrot_param_cache import BorderParamSnapshot, Timed
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_state import DriverStateRenderer
+from openpilot.selfdrive.ui.onroad.external_ai_overlay import ExternalAIOverlayRenderer
 from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
@@ -51,6 +52,7 @@ class AugmentedRoadView(CameraView):
     self._hud_renderer = HudRenderer()
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
+    self._external_ai_overlay = ExternalAIOverlayRenderer()
 
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
@@ -120,6 +122,7 @@ class AugmentedRoadView(CameraView):
       _t = time.monotonic()
       self.model_renderer.render(self._content_rect)
       model_ms = (time.monotonic() - _t) * 1000.0
+    self._external_ai_overlay.render(self._content_rect)
     _t = time.monotonic()
     self._hud_renderer.render(self._content_rect)  # plot 활성 시 plot 비용도 hud 구간에 포함
     hud_ms = (time.monotonic() - _t) * 1000.0
