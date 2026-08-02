@@ -160,6 +160,7 @@ class ExternalAIService : Service() {
         inferenceEndNs,
         detections,
         modelName,
+        detector.backend,
       )
 
       val windowNs = inferenceEndNs - statusWindowStartNs
@@ -171,6 +172,7 @@ class ExternalAIService : Service() {
           inferenceFps = inferenceCount / seconds,
           averageInferenceMs = averageInferenceMs,
           objectCount = lastObjects,
+          backendLabel = detector.backendLabel,
         ))
         receivedCount = 0
         inferenceCount = 0
@@ -185,6 +187,7 @@ class ExternalAIService : Service() {
     inferenceFps: Double,
     averageInferenceMs: Double,
     objectCount: Int,
+    backendLabel: String,
   ): String {
     val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val batteryTemp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
@@ -192,7 +195,7 @@ class ExternalAIService : Service() {
     return "연결됨: ${config.host}:${config.framePort}\n" +
       "수신 ${"%.1f".format(receiveFps)} FPS · 추론 ${"%.1f".format(inferenceFps)} FPS\n" +
       "평균 추론 ${"%.1f".format(averageInferenceMs)} ms · 객체 ${objectCount}개\n" +
-      "백엔드 ONNX Runtime CPU · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
+      "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
       "열 상태 $thermalStatus · 왕복 지연은 C3X에서 측정"
   }
 

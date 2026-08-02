@@ -5,13 +5,13 @@ This experimental Android app connects to `phoneaid` on a C3X, receives 640×360
 ## Supported first-stage configuration
 
 - 64-bit ARM phone (`arm64-v8a`) with Android 10 (API 29) or newer
-- ONNX Runtime Android CPU backend
+- ONNX Runtime Android NNAPI-first backend with automatic CPU fallback
 - Float32 NCHW model input shaped `[1, 3, H, W]` (dynamic H/W defaults to 640)
 - Standard Ultralytics YOLOv8/YOLO11 detection output shaped `[1, 84, N]` or `[1, N, 84]`
 - COCO classes: person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign
 - Class-aware non-maximum suppression at IoU 0.45 and at most 64 returned objects
 
-End-to-end ONNX exports that already perform NMS and return `[1, N, 6]` are not supported yet. QNN/NPU and GPU execution providers are intentionally deferred until the CPU path has been measured on the actual phone.
+End-to-end ONNX exports that already perform NMS and return `[1, N, 6]` are not supported yet. The app registers the Android NNAPI execution provider first with FP16 and NCHW enabled and NNAPI CPU disabled. Supported graph partitions are therefore offered to an available NPU, DSP, or GPU, while unsupported operations can remain on the ONNX Runtime CPU provider. If the accelerated session cannot be created, the app automatically recreates the whole session on CPU and reports that fallback. A direct Qualcomm QNN backend is not bundled yet.
 
 No model is bundled. Select a compatible `.onnx` model from the app. A typical Ultralytics export is:
 
@@ -41,7 +41,7 @@ The app requests notification permission on Android 13 or newer. Start the clien
 4. Keep TCP frame port `7724` and UDP result port `7725` unless both ends are changed together.
 5. Enter the C3X address in the app, select the ONNX model, and press **시작**.
 
-The status panel reports connection state, receive FPS, inference FPS, average inference time, object count, CPU backend, battery temperature, and Android thermal status. End-to-end round-trip age is calculated on the C3X because the phone and C3X monotonic clocks have different origins.
+The status panel reports connection state, receive FPS, inference FPS, average inference time, object count, the selected NNAPI or CPU-fallback backend, battery temperature, and Android thermal status. The same backend identifier is returned to the C3X with every result. End-to-end round-trip age is calculated on the C3X because the phone and C3X monotonic clocks have different origins.
 
 ## Protocol
 

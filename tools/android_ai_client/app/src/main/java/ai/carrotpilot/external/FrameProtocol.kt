@@ -67,6 +67,7 @@ object FrameProtocol {
     inferenceEndNs: Long,
     detections: List<Detection>,
     modelName: String,
+    backend: String,
   ) {
     val objects = JSONArray()
     detections.forEach { detection ->
@@ -88,7 +89,7 @@ object FrameProtocol {
       put("inference_start_timestamp_ns", inferenceStartNs)
       put("inference_end_timestamp_ns", inferenceEndNs)
       put("model", modelName.take(64))
-      put("backend", "onnxruntime-cpu")
+      put("backend", backend.take(64))
       put("objects", objects)
     }.toString().toByteArray(StandardCharsets.UTF_8)
     require(json.size <= 65_507) { "탐지 결과 UDP 패킷이 너무 큽니다." }

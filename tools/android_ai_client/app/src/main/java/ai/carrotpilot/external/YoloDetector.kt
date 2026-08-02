@@ -8,20 +8,23 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import ai.onnxruntime.providers.NNAPIFlags
 import java.io.Closeable
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.EnumSet
 import kotlin.math.max
 import kotlin.math.min
 
 class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Closeable {
   private val environment = OrtEnvironment.getEnvironment()
-  private val options = OrtSession.SessionOptions().apply {
-    setIntraOpNumThreads(max(1, Runtime.getRuntime().availableProcessors() / 2))
-  }
-  private val session = environment.createSession(modelFile.absolutePath, options)
+  private val sessionSetup = createPreferredSession(modelFile)
+  private val options = sessionSetup.options
+  private val session = sessionSetup.session
+  val backend = sessionSetup.backend
+  val backendLabel = sessionSetup.backendLabel
   private val inputName = session.inputNames.first()
   private val inputShape = (session.inputInfo[inputName]?.info as? TensorInfo)?.shape
     ?: error("YOLO 입력 텐서 정보를 읽을 수 없습니다.")
@@ -152,6 +155,42 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
     options.close()
   }
 
+  private fun createPreferredSession(modelFile: File): SessionSetup {
+    val nnapiOptions = createBaseOptions()
+    try {
+      nnapiOptions.addNnapi(EnumSet.of(
+        NNAPIFlags.CPU_DISABLED,
+        NNAPIFlags.USE_FP16,
+        NNAPIFlags.USE_NCHW,
+      ))
+      return SessionSetup(
+        options = nnapiOptions,
+        session = environment.createSession(modelFile.absolutePath, nnapiOptions),
+        backend = "onnxruntime-nnapi",
+        backendLabel = "NNAPI 우선(NPU/DSP/GPU · 미지원 연산 CPU)",
+      )
+    } catch (nnapiError: Exception) {
+      nnapiOptions.close()
+      val cpuOptions = createBaseOptions()
+      try {
+        return SessionSetup(
+          options = cpuOptions,
+          session = environment.createSession(modelFile.absolutePath, cpuOptions),
+          backend = "onnxruntime-cpu-fallback",
+          backendLabel = "ONNX Runtime CPU(NNAPI 사용 불가)",
+        )
+      } catch (cpuError: Exception) {
+        cpuOptions.close()
+        cpuError.addSuppressed(nnapiError)
+        throw cpuError
+      }
+    }
+  }
+
+  private fun createBaseOptions() = OrtSession.SessionOptions().apply {
+    setIntraOpNumThreads(max(1, Runtime.getRuntime().availableProcessors() / 2))
+  }
+
   private data class PreparedInput(
     val tensor: FloatBuffer,
     val scale: Float,
@@ -159,6 +198,13 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
     val padY: Float,
     val sourceWidth: Int,
     val sourceHeight: Int,
+  )
+
+  private data class SessionSetup(
+    val options: OrtSession.SessionOptions,
+    val session: OrtSession,
+    val backend: String,
+    val backendLabel: String,
   )
 
   companion object {
