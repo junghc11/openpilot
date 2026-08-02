@@ -5,6 +5,25 @@ from dataclasses import dataclass
 from typing import Any
 
 
+DISPLAY_NAMES_KO = {
+  "car": "승용차",
+  "truck": "트럭",
+  "bus": "버스",
+  "motorcycle": "오토바이",
+  "bicycle": "자전거",
+  "person": "보행자",
+  "traffic light": "신호등",
+  "stop sign": "정지표지",
+}
+
+BACKEND_DISPLAY_NAMES = {
+  "onnxruntime-nnapi": "NNAPI",
+  "onnxruntime-cpu-fallback": "CPU",
+  "onnxruntime-cpu": "CPU",
+  "qnn": "QNN",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ExternalAIOverlayObject:
   class_name: str
@@ -22,6 +41,40 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name)
   except Exception:
     return default
+
+
+def external_ai_display_name(class_name: str) -> str:
+  normalized = str(class_name or "").strip().lower()
+  return DISPLAY_NAMES_KO.get(normalized, normalized.upper())
+
+
+def phone_ai_status_text(
+    state: Any,
+    *,
+    service_alive: bool,
+    service_valid: bool,
+) -> tuple[str, bool]:
+  if not service_alive:
+    return "외부 AI · 시작 대기", False
+  if not service_valid or state is None:
+    return "외부 AI · 상태 확인 중", False
+  if not bool(_field(state, "connected", False)) or not bool(_field(state, "valid", False)):
+    return "외부 AI · 스마트폰 연결 대기", False
+
+  backend_value = str(_field(state, "backend", "") or "").strip().lower()
+  backend = BACKEND_DISPLAY_NAMES.get(backend_value, backend_value.upper() or "연산 중")
+  try:
+    latency_ms = float(_field(state, "latencyMs", 0.0))
+  except (TypeError, ValueError):
+    latency_ms = 0.0
+  if not math.isfinite(latency_ms) or latency_ms < 0.0:
+    latency_ms = 0.0
+  objects = _field(state, "objects", ()) or ()
+  try:
+    object_count = len(objects)
+  except TypeError:
+    object_count = 0
+  return f"외부 AI · {backend} · {latency_ms:.0f}ms · {object_count}개", True
 
 
 def phone_ai_overlay_objects(

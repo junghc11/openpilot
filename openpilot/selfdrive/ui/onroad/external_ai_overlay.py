@@ -4,7 +4,12 @@ import time
 
 import pyray as rl
 
-from openpilot.selfdrive.carrot.external_ai.overlay import ExternalAIOverlayObject, phone_ai_overlay_objects
+from openpilot.selfdrive.carrot.external_ai.overlay import (
+  ExternalAIOverlayObject,
+  external_ai_display_name,
+  phone_ai_overlay_objects,
+  phone_ai_status_text,
+)
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_draw import draw_text_ui_style
@@ -16,7 +21,8 @@ VEHICLE_CLASSES = frozenset(("car", "truck", "bus", "motorcycle", "bicycle"))
 
 class ExternalAIOverlayRenderer:
   def __init__(self) -> None:
-    self._enabled = False
+    self._external_ai_enabled = False
+    self._show_overlay = False
     self._next_param_refresh = 0.0
     self._font = gui_app.font(FontWeight.SEMI_BOLD)
 
@@ -26,19 +32,31 @@ class ExternalAIOverlayRenderer:
       return
     self._next_param_refresh = now + PARAM_REFRESH_INTERVAL_S
     try:
-      self._enabled = ui_state.params.get_bool("ExternalAIShowOverlay")
+      self._external_ai_enabled = ui_state.params.get_bool("ExternalAIEnabled")
+      self._show_overlay = ui_state.params.get_bool("ExternalAIShowOverlay")
     except Exception:
-      self._enabled = False
+      self._external_ai_enabled = False
+      self._show_overlay = False
 
   def render(self, rect: rl.Rectangle) -> None:
     self._refresh_enabled()
-    if not self._enabled:
+    if not self._external_ai_enabled or not self._show_overlay:
       return
     try:
-      if not ui_state.sm.alive["phoneAIState"] or not ui_state.sm.valid["phoneAIState"]:
-        return
-      state = ui_state.sm["phoneAIState"]
+      service_alive = bool(ui_state.sm.alive["phoneAIState"])
+      service_valid = bool(ui_state.sm.valid["phoneAIState"])
+      state = ui_state.sm["phoneAIState"] if service_alive and service_valid else None
     except Exception:
+      service_alive = False
+      service_valid = False
+      state = None
+    status_text, connected = phone_ai_status_text(
+      state,
+      service_alive=service_alive,
+      service_valid=service_valid,
+    )
+    if state is None:
+      self._draw_status(rect, status_text, connected)
       return
     objects = phone_ai_overlay_objects(
       state,
@@ -49,6 +67,33 @@ class ExternalAIOverlayRenderer:
     )
     for item in objects:
       self._draw_object(item)
+    self._draw_status(rect, status_text, connected)
+
+  def _draw_status(self, rect: rl.Rectangle, text: str, connected: bool) -> None:
+    font_size = max(22, min(32, int(rect.height * 0.032)))
+    measured = rl.measure_text_ex(self._font, text, font_size, 0.0)
+    padding_x = 18.0
+    padding_y = 10.0
+    width = measured.x + padding_x * 2.0
+    height = measured.y + padding_y * 2.0
+    x = rect.x + (rect.width - width) * 0.5
+    y = rect.y + 18.0
+    panel = rl.Rectangle(x, y, width, height)
+    accent = rl.Color(80, 220, 140, 235) if connected else rl.Color(255, 184, 64, 235)
+    rl.draw_rectangle_rounded(panel, 0.45, 10, rl.Color(8, 12, 16, 205))
+    rl.draw_rectangle_rounded_lines_ex(panel, 0.45, 10, 2.0, accent)
+    draw_text_ui_style(
+      text,
+      x + width * 0.5,
+      y + padding_y,
+      font_size,
+      rl.WHITE,
+      font=self._font,
+      border_width=1.0,
+      shadow_offset=2.0,
+      align="center_top",
+      y_offset=0.0,
+    )
 
   @staticmethod
   def _color(item: ExternalAIOverlayObject) -> rl.Color:
@@ -84,12 +129,15 @@ class ExternalAIOverlayRenderer:
     outline = rl.Color(color.r, color.g, color.b, 230)
     frame = rl.Rectangle(x, y, width, height)
     rl.draw_rectangle_rounded_lines_ex(frame, 0.10, 6, max(2.0, min(width, height) * 0.018), outline)
-    label = f"{item.class_name.upper()} {item.confidence * 100.0:.0f}%"
+    label = f"{external_ai_display_name(item.class_name)} {item.confidence * 100.0:.0f}%"
     font_size = max(18, min(34, int(height * 0.13)))
+    measured = rl.measure_text_ex(self._font, label, font_size, 0.0)
+    label_rect = rl.Rectangle(x + 3.0, y + 3.0, measured.x + 16.0, measured.y + 10.0)
+    rl.draw_rectangle_rounded(label_rect, 0.25, 6, rl.Color(5, 8, 12, 205))
     draw_text_ui_style(
       label,
-      x + 4.0,
-      y + 2.0,
+      x + 11.0,
+      y + 8.0,
       font_size,
       rl.WHITE,
       font=self._font,
