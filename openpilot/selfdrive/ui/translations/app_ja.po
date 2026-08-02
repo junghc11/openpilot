@@ -1469,3 +1469,35 @@ msgstr ""
 msgid "🔥 Firehose Mode 🔥"
 msgstr "🔥 Firehoseモード 🔥"
 
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Bicycle"
+msgstr "自転車"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Bus"
+msgstr "バス"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Car"
+msgstr "乗用車"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Motorcycle"
+msgstr "オートバイ"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Pedestrian"
+msgstr "歩行者"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Stop Sign"
+msgstr "一時停止標識"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Traffic Light"
+msgstr "信号機"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Truck"
+msgstr "トラック"
+

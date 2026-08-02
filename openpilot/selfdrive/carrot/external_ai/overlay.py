@@ -5,17 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 
-DISPLAY_NAMES_KO = {
-  "car": "승용차",
-  "truck": "트럭",
-  "bus": "버스",
-  "motorcycle": "오토바이",
-  "bicycle": "자전거",
-  "person": "보행자",
-  "traffic light": "신호등",
-  "stop sign": "정지표지",
-}
-
 BACKEND_DISPLAY_NAMES = {
   "onnxruntime-nnapi": "NNAPI",
   "onnxruntime-cpu-fallback": "CPU",
@@ -48,11 +37,6 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name)
   except Exception:
     return default
-
-
-def external_ai_display_name(class_name: str) -> str:
-  normalized = str(class_name or "").strip().lower()
-  return DISPLAY_NAMES_KO.get(normalized, normalized.upper())
 
 
 def phone_ai_npu_badge_active(state: Any) -> bool:

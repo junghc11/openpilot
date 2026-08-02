@@ -25,6 +25,7 @@ from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
 from openpilot.selfdrive.carrot.external_ai.projection import project_phone_ai_state
+from openpilot.selfdrive.ui.onroad.external_ai_labels import external_ai_display_name_for_language
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -157,6 +158,8 @@ class OpenpilotLiveSource:
         self._energy_gauge_label = "fuel"
         self._max_lateral_accel = DEFAULT_MAX_LATERAL_ACCEL
         self._next_debug_param_read_t = 0.0
+        self._external_ai_language = "en"
+        self._next_external_ai_language_read_t = 0.0
         self._custom_steer_ratio: float | None = None
         self._steer_actuator_delay_param_s: float | None = None
         self._cached_live_debug: LiveDebugInfo | None = None
@@ -472,9 +475,10 @@ class OpenpilotLiveSource:
             except Exception:
                 return ()
         projected = project_phone_ai_state(self._service_data("phoneAIState"))
+        language = self._external_ai_display_language()
         return tuple(
             DetectedVehicle(
-                label=f"AI {item.class_name.upper()}",
+                label=f"AI {external_ai_display_name_for_language(item.class_name, language)}",
                 longitudinal_m=item.longitudinal_m,
                 lateral_m=item.lateral_m,
                 source="externalAI",
@@ -484,6 +488,21 @@ class OpenpilotLiveSource:
             )
             for item in projected
         )
+
+    def _external_ai_display_language(self) -> str:
+        now = time.monotonic()
+        language = getattr(self, "_external_ai_language", "en")
+        if now < getattr(self, "_next_external_ai_language_read_t", 0.0):
+            return language
+        self._next_external_ai_language_read_t = now + 1.0
+        params = getattr(self, "params", None)
+        if params is not None:
+            try:
+                language = params.get("LanguageSetting", return_default=True) or "en"
+            except Exception:
+                pass
+        self._external_ai_language = language
+        return language
 
     def status_text(self) -> str:
         profile_stage = self._profile_start()

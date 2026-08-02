@@ -1475,3 +1475,35 @@ msgstr "信号灯已变化"
 msgid "🔥 Firehose Mode 🔥"
 msgstr "🔥 Firehose 模式 🔥"
 
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Bicycle"
+msgstr "自行车"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Bus"
+msgstr "公交车"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Car"
+msgstr "汽车"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Motorcycle"
+msgstr "摩托车"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Pedestrian"
+msgstr "行人"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Stop Sign"
+msgstr "停车标志"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Traffic Light"
+msgstr "交通信号灯"
+
+#: openpilot/selfdrive/ui/onroad/external_ai_labels.py
+msgid "Truck"
+msgstr "卡车"
+

@@ -6,13 +6,14 @@ import pyray as rl
 
 from openpilot.selfdrive.carrot.external_ai.overlay import (
   ExternalAIOverlayObject,
-  external_ai_display_name,
   phone_ai_npu_badge_active,
   phone_ai_overlay_objects,
   phone_ai_status_text,
 )
+from openpilot.selfdrive.ui.onroad.external_ai_labels import external_ai_display_name
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.system.ui.lib.application import FontWeight, gui_app
+from openpilot.system.ui.lib.application import FontWeight, font_fallback, gui_app
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_draw import draw_text_ui_style
 
 
@@ -158,9 +159,10 @@ class ExternalAIOverlayRenderer:
     outline = rl.Color(color.r, color.g, color.b, 230)
     frame = rl.Rectangle(x, y, width, height)
     rl.draw_rectangle_rounded_lines_ex(frame, 0.10, 6, max(2.0, min(width, height) * 0.018), outline)
-    label = f"{external_ai_display_name(item.class_name)} {item.confidence * 100.0:.0f}%"
+    label = f"{external_ai_display_name(item.class_name, translate=tr)} {item.confidence * 100.0:.0f}%"
     font_size = max(18, min(34, int(height * 0.13)))
-    measured = rl.measure_text_ex(self._font, label, font_size, 0.0)
+    label_font = font_fallback(self._font)
+    measured = rl.measure_text_ex(label_font, label, font_size, 0.0)
     label_rect = rl.Rectangle(x + 3.0, y + 3.0, measured.x + 16.0, measured.y + 10.0)
     rl.draw_rectangle_rounded(label_rect, 0.25, 6, rl.Color(5, 8, 12, 205))
     draw_text_ui_style(
@@ -169,7 +171,7 @@ class ExternalAIOverlayRenderer:
       y + 8.0,
       font_size,
       rl.WHITE,
-      font=self._font,
+      font=label_font,
       border_width=1.0,
       shadow_offset=2.0,
       align="left_top",

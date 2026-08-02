@@ -104,7 +104,10 @@ def test_live_cluster_converts_phone_ai_objects_to_visualization_only_detections
     ),),
   )
   source = object.__new__(OpenpilotLiveSource)
-  source.params = SimpleNamespace(get_bool=lambda name: name == "ExternalAIShowOverlay")
+  source.params = SimpleNamespace(
+    get_bool=lambda name: name == "ExternalAIShowOverlay",
+    get=lambda name, **_kwargs: "main_ko" if name == "LanguageSetting" else None,
+  )
   source._service_alive = lambda service: service == "phoneAIState"
   source._service_valid = lambda service: service == "phoneAIState"
   source._service_data = lambda service: phone_state if service == "phoneAIState" else None
@@ -113,6 +116,7 @@ def test_live_cluster_converts_phone_ai_objects_to_visualization_only_detections
 
   assert len(vehicles) == 1
   assert vehicles[0].source == "externalAI"
+  assert vehicles[0].label == "AI 트럭"
   assert vehicles[0].object_class == "truck"
   assert vehicles[0].probability == pytest.approx(0.93)
   assert vehicles[0].lateral_m > 0.0
