@@ -93,6 +93,12 @@ from cluster_scene import (
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
 from cluster_utils import blink_visible, clamp
+from cluster_vehicle_visuals import (
+    VEHICLE_VISUAL_SPECS,
+    VehicleMeshData,
+    build_vehicle_mesh_data,
+    vehicle_model_key_for_render,
+)
 
 
 CLUSTER_DIR = Path(__file__).resolve().parent
@@ -102,6 +108,7 @@ OPENPILOT_ADDON_FONT_DIR = SELFDRIVE_DIR / "assets" / "addon" / "font"
 KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
+LEGACY_VEHICLE_MODEL_KEY = "cybertruck"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
@@ -894,8 +901,8 @@ class ClusterUiRenderer:
         self._nv12_dmabuf_pool = None
         self._nv12_dmabuf_pool_checked = False
         self._nv12_dmabuf_pool_disabled = False
-        self._vehicle_model = None
-        self._vehicle_model_load_attempted = False
+        self._vehicle_models: dict[str, object] = {}
+        self._vehicle_models_load_attempted = False
         self._scene_cache_key: tuple[object, ...] | None = None
         self._scene_cache: ClusterScene | None = None
         self._speed_bg_texture = None
@@ -1161,8 +1168,8 @@ class ClusterUiRenderer:
         self._korean_font = self._load_korean_font()
         self._profile_add("renderer.open.load_font", profile_stage)
         profile_stage = self._profile_start()
-        self._load_vehicle_model()
-        self._profile_add("renderer.open.load_vehicle_model", profile_stage)
+        self._load_vehicle_models()
+        self._profile_add("renderer.open.load_vehicle_models", profile_stage)
         profile_stage = self._profile_start()
         self._load_follow_vehicle_texture()
         self._profile_add("renderer.open.load_follow_vehicle_texture", profile_stage)
@@ -1271,10 +1278,10 @@ class ClusterUiRenderer:
         self._owns_font = False
         self._korean_font = None
         self._owns_korean_font = False
-        if self._vehicle_model is not None:
-            rl.unload_model(self._vehicle_model)
-            self._vehicle_model = None
-        self._vehicle_model_load_attempted = False
+        for model in self._vehicle_models.values():
+            rl.unload_model(model)
+        self._vehicle_models.clear()
+        self._vehicle_models_load_attempted = False
         self._scene_cache_key = None
         self._scene_cache = None
         self._camera_overlay_strip_points = None
@@ -2623,29 +2630,60 @@ class ClusterUiRenderer:
             *range(0xAC00, 0xD7A4),
         )
 
-    def _load_vehicle_model(self) -> None:
-        if self._vehicle_model_load_attempted:
+    def _load_vehicle_models(self) -> None:
+        if self._vehicle_models_load_attempted:
             return
-        self._vehicle_model_load_attempted = True
-        if not VEHICLE_MODEL_PATH.exists():
-            return
-        try:
-            profile_stage = self._profile_start()
-            mesh = self._load_obj_mesh(VEHICLE_MODEL_PATH)
-            self._profile_add("vehicle_model.parse_obj", profile_stage)
-            profile_stage = self._profile_start()
-            rl.upload_mesh(rl.ffi.addressof(mesh), False)
-            self._profile_add("vehicle_model.upload_mesh", profile_stage)
-            profile_stage = self._profile_start()
-            model = rl.load_model_from_mesh(mesh)
-            self._profile_add("vehicle_model.load_from_mesh", profile_stage)
-            if not rl.is_model_valid(model):
-                rl.unload_model(model)
-                return
-            self._vehicle_model = model
-        except Exception as exc:
-            print(f"Cybertruck vehicle model load failed: {exc}")
-            self._vehicle_model = None
+        self._vehicle_models_load_attempted = True
+        if VEHICLE_MODEL_PATH.exists():
+            try:
+                profile_stage = self._profile_start()
+                mesh = self._load_obj_mesh(VEHICLE_MODEL_PATH)
+                self._profile_add("vehicle_model.cybertruck.parse", profile_stage)
+                self._vehicle_models[LEGACY_VEHICLE_MODEL_KEY] = self._load_model_from_mesh(
+                    mesh,
+                    "vehicle_model.cybertruck",
+                )
+            except Exception as exc:
+                print(f"Cybertruck vehicle model load failed: {exc}")
+
+        for model_key in VEHICLE_VISUAL_SPECS:
+            try:
+                profile_stage = self._profile_start()
+                mesh_data = build_vehicle_mesh_data(model_key)
+                mesh = self._mesh_from_data(mesh_data)
+                self._profile_add(f"vehicle_model.{model_key}.build", profile_stage)
+                self._vehicle_models[model_key] = self._load_model_from_mesh(
+                    mesh,
+                    f"vehicle_model.{model_key}",
+                )
+            except Exception as exc:
+                print(f"{model_key} vehicle model load failed: {exc}")
+
+    def _load_model_from_mesh(self, mesh, profile_name: str):
+        profile_stage = self._profile_start()
+        rl.upload_mesh(rl.ffi.addressof(mesh), False)
+        self._profile_add(f"{profile_name}.upload", profile_stage)
+        profile_stage = self._profile_start()
+        model = rl.load_model_from_mesh(mesh)
+        self._profile_add(f"{profile_name}.load", profile_stage)
+        if not rl.is_model_valid(model):
+            rl.unload_model(model)
+            raise RuntimeError(f"raylib rejected {profile_name}")
+        return model
+
+    def _mesh_from_data(self, data: VehicleMeshData):
+        vertex_count = len(data.vertices) // 3
+        if vertex_count < 3 or vertex_count % 3 != 0:
+            raise RuntimeError(f"invalid generated vehicle mesh vertex count: {vertex_count}")
+        if len(data.normals) != len(data.vertices) or len(data.colors) != vertex_count * 4:
+            raise RuntimeError("generated vehicle mesh buffers have inconsistent lengths")
+        mesh = rl.Mesh()
+        mesh.vertexCount = vertex_count
+        mesh.triangleCount = vertex_count // 3
+        mesh.vertices = self._alloc_float_array(list(data.vertices))
+        mesh.normals = self._alloc_float_array(list(data.normals))
+        mesh.colors = self._alloc_uchar_array(list(data.colors))
+        return mesh
 
     def _load_follow_vehicle_texture(self) -> None:
         if self._follow_vehicle_texture is not None:
@@ -3177,16 +3215,19 @@ class ClusterUiRenderer:
         return points, point_count
 
     def _draw_vehicle(self, vehicle: VehicleBox) -> None:
-        source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint", "cornerRadar")
-        use_model = (
-            self._vehicle_model is not None
-            and not source_marker
-            and (not vehicle.source or vehicle.primary or vehicle.cut_in)
+        model_key = vehicle_model_key_for_render(
+            vehicle.model_key,
+            vehicle.source,
+            vehicle.primary,
+            vehicle.cut_in,
+            self._vehicle_models,
+            LEGACY_VEHICLE_MODEL_KEY,
         )
-        if use_model:
+        if model_key is not None:
             self._draw_vehicle_shadow(vehicle)
-            self._draw_vehicle_model(vehicle)
+            self._draw_vehicle_model(vehicle, model_key)
             return
+        source_marker = vehicle.source.startswith("modelV2") or vehicle.source in ("radarState", "radarPoint", "cornerRadar")
         if vehicle.source and (source_marker or (not vehicle.primary and not vehicle.cut_in)):
             self._draw_vehicle_marker(vehicle)
             return
@@ -3360,8 +3401,9 @@ class ClusterUiRenderer:
             (0, 0, 0, int(18 + 34 * clamp(vehicle.confidence, 0.0, 1.0))),
         )
 
-    def _draw_vehicle_model(self, vehicle: VehicleBox) -> None:
-        if self._vehicle_model is None:
+    def _draw_vehicle_model(self, vehicle: VehicleBox, model_key: str = LEGACY_VEHICLE_MODEL_KEY) -> None:
+        model = self._vehicle_models.get(model_key)
+        if model is None:
             return
         yaw_deg = math.degrees(math.atan2(-vehicle.forward_x, vehicle.forward_y))
         position = rl.Vector3(vehicle.center.x, vehicle.center.y, 0.035)
@@ -3371,7 +3413,7 @@ class ClusterUiRenderer:
             rl.rl_disable_backface_culling()
             alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
             tint = rl_color(vehicle.body_color) if vehicle.source == "radarPoint" else rl_color(WHITE, alpha)
-            rl.draw_model_ex(self._vehicle_model, position, rotation_axis, yaw_deg, scale, tint)
+            rl.draw_model_ex(model, position, rotation_axis, yaw_deg, scale, tint)
         finally:
             rl.rl_enable_backface_culling()
 

@@ -54,6 +54,7 @@ from cluster_models import (
     radar_position_is_zero,
 )
 from cluster_utils import clamp, darken, lighten, smoothstep
+from cluster_vehicle_visuals import visual_spec_for_object_class
 
 
 Color = tuple[int, int, int, int]
@@ -236,6 +237,7 @@ class VehicleBox:
     cut_in: bool = False
     primary: bool = False
     annotate: bool = False
+    model_key: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,7 +424,9 @@ def render_relative_forward_m_from_scene(forward_m: float, longitudinal_scale: f
 def detected_vehicle_scene_forward_m(vehicle: DetectedVehicle, state: ClusterUiState) -> float:
     forward_m = render_scene_forward_m(vehicle.longitudinal_m, state)
     if vehicle.longitudinal_m > 0.0 and (vehicle.primary or vehicle.cut_in):
-        forward_m += VEHICLE_LENGTH_M * 0.5
+        visual_spec = visual_spec_for_object_class(vehicle.object_class)
+        vehicle_length_m = visual_spec.length_m if visual_spec is not None else VEHICLE_LENGTH_M
+        forward_m += vehicle_length_m * 0.5
     return forward_m
 
 
@@ -2148,6 +2152,8 @@ def merge_detected_vehicle_for_display(base: DetectedVehicle, other: DetectedVeh
     return replace(
         base,
         source=merged_detected_vehicle_source(base.source, other.source),
+        object_class=base.object_class or other.object_class,
+        object_track_id=base.object_track_id if base.object_track_id is not None else other.object_track_id,
         probability=max(base.probability, other.probability),
         relative_speed_mps=base.relative_speed_mps if base.relative_speed_mps is not None else other.relative_speed_mps,
         absolute_speed_kph=base.absolute_speed_kph if base.absolute_speed_kph is not None else other.absolute_speed_kph,
@@ -2802,6 +2808,10 @@ def vehicle_box(
     x_offset_m: float = 0.0,
     center_x_m_override: float | None = None,
     center_z_m_offset: float = 0.0,
+    width_m_override: float | None = None,
+    length_m_override: float | None = None,
+    height_m_override: float | None = None,
+    model_key: str = "",
 ) -> VehicleBox:
     confidence = clamp(confidence, 0.0, 1.0)
     alpha = int(92 + 163 * confidence)
@@ -2823,9 +2833,9 @@ def vehicle_box(
         lateral_speed_mps,
         (right_x, right_y, forward_x, forward_y),
     )
-    width_m = VEHICLE_WIDTH_M
-    length_m = VEHICLE_LENGTH_M
-    height_m = VEHICLE_HEIGHT_M
+    width_m = width_m_override if width_m_override is not None else VEHICLE_WIDTH_M
+    length_m = length_m_override if length_m_override is not None else VEHICLE_LENGTH_M
+    height_m = height_m_override if height_m_override is not None else VEHICLE_HEIGHT_M
     actual_longitudinal_m = (
         scene_data_relative_forward_m(forward_m)
         if longitudinal_m is None
@@ -2857,6 +2867,7 @@ def vehicle_box(
         cut_in=cut_in,
         primary=primary,
         annotate=annotate,
+        model_key=model_key,
     )
 
 
@@ -2960,6 +2971,7 @@ def translate_vehicle_box_x(vehicle: VehicleBox, shift_x_m: float) -> VehicleBox
         acceleration_mps2=vehicle.acceleration_mps2,
         ttc_s=vehicle.ttc_s,
         cut_in=vehicle.cut_in,
+        model_key=vehicle.model_key,
         primary=vehicle.primary,
         annotate=vehicle.annotate,
     )
@@ -3682,8 +3694,13 @@ def build_cluster_scene(
                 annotate=vehicle_badge_has_special_info(detected),
                 center_x_m_override=detected.lateral_m + relative_scene_x_offset_m,
                 center_z_m_offset=DETECTED_VEHICLE_DISPLAY_HEIGHT_OFFSET_M,
+                width_m_override=visual_spec.width_m if visual_spec is not None else None,
+                length_m_override=visual_spec.length_m if visual_spec is not None else None,
+                height_m_override=visual_spec.height_m if visual_spec is not None else None,
+                model_key=visual_spec.model_key if visual_spec is not None else "",
             )
             for detected in render_detected_vehicles
+            for visual_spec in (visual_spec_for_object_class(detected.object_class),)
         )
         blocking_detected_vehicles = tuple(
             detected for detected in state.detected_vehicles if vehicle_blocks_path(detected)

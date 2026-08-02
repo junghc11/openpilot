@@ -64,6 +64,38 @@ def test_road_camera_radar_point_uses_transparent_source_colored_frame(monkeypat
   assert (outlines[0][4].r, outlines[0][4].g, outlines[0][4].b) == color
 
 
+def test_external_ai_vehicle_uses_class_model_instead_of_marker(monkeypatch):
+  renderer = object.__new__(ClusterUiRenderer)
+  renderer._vehicle_models = {"car": object(), "cybertruck": object()}
+  draws = []
+  vehicle = VehicleBox(
+    center=Vec3(0.0, 25.0, 0.75),
+    right_x=1.0,
+    right_y=0.0,
+    forward_x=0.0,
+    forward_y=1.0,
+    width_m=1.85,
+    length_m=4.5,
+    height_m=1.5,
+    body_color=(1, 2, 3, 255),
+    side_color=(1, 2, 3, 255),
+    rear_color=(1, 2, 3, 255),
+    top_highlight=(1, 2, 3, 255),
+    outline_color=(1, 2, 3, 255),
+    source="externalAI",
+    model_key="car",
+  )
+
+  monkeypatch.setattr(renderer, "_draw_vehicle_shadow", lambda value: draws.append(("shadow", value)))
+  monkeypatch.setattr(renderer, "_draw_vehicle_model", lambda value, key: draws.append(("model", key)))
+  monkeypatch.setattr(renderer, "_draw_vehicle_marker", lambda _value: pytest.fail("marker fallback used"))
+  monkeypatch.setattr(renderer, "_draw_vehicle_box", lambda _value: pytest.fail("box fallback used"))
+
+  renderer._draw_vehicle(vehicle)
+
+  assert draws[-1] == ("model", "car")
+
+
 def test_road_camera_detected_vehicle_uses_transparent_colored_rounded_frame(monkeypatch):
   renderer = object.__new__(ClusterUiRenderer)
   outlines = []
@@ -655,6 +687,24 @@ def test_road_camera_keeps_longitudinal_render_distance_one_to_one() -> None:
   assert detected_box.center.x == pytest.approx(2.25)
   assert detected_box.center.y == pytest.approx(EGO_FORWARD_M + 40.0 + VEHICLE_LENGTH_M * 0.5)
   assert detected_box.longitudinal_m == 40.0
+
+
+def test_external_ai_class_selects_real_shape_and_dimensions() -> None:
+  detections = (
+    DetectedVehicle("car", 22.0, -1.2, source="externalAI", object_class="car", object_track_id=10),
+    DetectedVehicle("truck", 35.0, 1.3, source="externalAI", object_class="truck", object_track_id=11),
+    DetectedVehicle("person", 15.0, 2.8, source="externalAI", object_class="person", object_track_id=12),
+  )
+
+  scene = build_cluster_scene(_cluster_state(detected_vehicles=detections))
+  boxes = {box.label: box for box in scene.vehicles if box.label in {"car", "truck", "person"}}
+
+  assert boxes["car"].model_key == "car"
+  assert boxes["car"].width_m == pytest.approx(1.85)
+  assert boxes["truck"].model_key == "truck"
+  assert boxes["truck"].length_m == pytest.approx(7.50)
+  assert boxes["person"].model_key == "person"
+  assert boxes["person"].height_m == pytest.approx(1.75)
 
 
 def test_model_road_geometry_matches_vehicle_longitudinal_scale() -> None:
