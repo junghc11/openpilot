@@ -4,10 +4,12 @@ import io
 import socket
 import threading
 import time
+from collections.abc import Callable
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from openpilot.selfdrive.carrot.external_ai.frame_protocol import VideoFrame, encode_video_frame
+from openpilot.selfdrive.carrot.external_ai.frame_protocol import H264Frame, VideoFrame, encode_h264_frame, encode_video_frame
 
 
 DEFAULT_FRAME_PORT = 7724
@@ -15,6 +17,10 @@ DEFAULT_FRAME_FPS = 5
 DEFAULT_JPEG_QUALITY = 75
 OUTPUT_WIDTH = 640
 OUTPUT_HEIGHT = 360
+H264_SOURCE = "youtubeRoadEncodeData"
+H264_FALLBACK_TIMEOUT_S = 3.0
+H264_QUEUE_MAX_FRAMES = 60
+H264_QUEUE_MAX_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -58,13 +64,102 @@ class LatestFrameSlot:
     with self._condition:
       self._condition.notify_all()
 
+  def reset(self) -> None:
+    with self._condition:
+      self._packet = b""
+
+
+class AdaptiveFrameQueue:
+  """Latest-only JPEG queue and ordered H.264 queue with keyframe recovery."""
+
+  def __init__(self, *, max_h264_frames: int = H264_QUEUE_MAX_FRAMES,
+               max_h264_bytes: int = H264_QUEUE_MAX_BYTES) -> None:
+    self._condition = threading.Condition()
+    self._packets: deque[tuple[int, bytes]] = deque()
+    self._generation = 0
+    self._queued_bytes = 0
+    self._mode = ""
+    self._waiting_for_keyframe = True
+    self._max_h264_frames = max_h264_frames
+    self._max_h264_bytes = max_h264_bytes
+    self.frames_queued = 0
+    self.frames_replaced = 0
+
+  def put(self, packet: bytes, *, encoding: str = "jpeg", keyframe: bool = False) -> None:
+    if encoding not in ("jpeg", "h264"):
+      raise ValueError(f"unsupported queue encoding {encoding}")
+    with self._condition:
+      self.frames_queued += 1
+      self._generation += 1
+      generation = self._generation
+
+      if encoding == "jpeg":
+        self.frames_replaced += len(self._packets)
+        self._packets.clear()
+        self._queued_bytes = 0
+        self._mode = "jpeg"
+        self._waiting_for_keyframe = True
+        self._packets.append((generation, packet))
+        self._queued_bytes = len(packet)
+        self._condition.notify_all()
+        return
+
+      if self._mode != "h264":
+        self.frames_replaced += len(self._packets)
+        self._packets.clear()
+        self._queued_bytes = 0
+        self._mode = "h264"
+        self._waiting_for_keyframe = True
+
+      if self._waiting_for_keyframe:
+        if not keyframe:
+          self.frames_replaced += 1
+          return
+        self._waiting_for_keyframe = False
+
+      if len(self._packets) >= self._max_h264_frames or self._queued_bytes + len(packet) > self._max_h264_bytes:
+        self.frames_replaced += len(self._packets)
+        self._packets.clear()
+        self._queued_bytes = 0
+        self._waiting_for_keyframe = not keyframe
+        if not keyframe:
+          self.frames_replaced += 1
+          return
+
+      self._packets.append((generation, packet))
+      self._queued_bytes += len(packet)
+      self._condition.notify_all()
+
+  def wait_after(self, generation: int, timeout_s: float) -> tuple[int, bytes] | None:
+    del generation  # Queue order, rather than generation comparison, is authoritative for H.264.
+    with self._condition:
+      self._condition.wait_for(lambda: bool(self._packets), timeout=timeout_s)
+      if not self._packets:
+        return None
+      packet_generation, packet = self._packets.popleft()
+      self._queued_bytes -= len(packet)
+      return packet_generation, packet
+
+  def reset(self) -> None:
+    with self._condition:
+      self.frames_replaced += len(self._packets)
+      self._packets.clear()
+      self._queued_bytes = 0
+      self._mode = ""
+      self._waiting_for_keyframe = True
+
+  def wake(self) -> None:
+    with self._condition:
+      self._condition.notify_all()
+
 
 class VideoFrameTcpServer:
-  def __init__(self, *, port: int = DEFAULT_FRAME_PORT, allowed_phone_ip: str = "", host: str = "0.0.0.0") -> None:
+  def __init__(self, *, port: int = DEFAULT_FRAME_PORT, allowed_phone_ip: str = "", host: str = "0.0.0.0",
+               slot: LatestFrameSlot | AdaptiveFrameQueue | None = None) -> None:
     self.port = port
     self.allowed_phone_ip = allowed_phone_ip.strip()
     self.host = host
-    self.slot = LatestFrameSlot()
+    self.slot = slot or LatestFrameSlot()
     self.client_connected = threading.Event()
     self._stop = threading.Event()
     self._thread: threading.Thread | None = None
@@ -131,6 +226,7 @@ class VideoFrameTcpServer:
   def _serve_client(self, client: socket.socket) -> None:
     self._client = client
     client.settimeout(2.0)
+    self.slot.reset()
     self.client_connected.set()
     generation = 0
     try:
@@ -180,12 +276,40 @@ def nv12_to_jpeg(buf: Any, *, width: int = OUTPUT_WIDTH, height: int = OUTPUT_HE
   return output.getvalue()
 
 
+def h264_packet_from_encode_data(encoded: Any) -> tuple[bytes, bool] | None:
+  data = bytes(getattr(encoded, "data", b"") or b"")
+  if not data:
+    return None
+  header = bytes(getattr(encoded, "header", b"") or b"")
+  idx = getattr(encoded, "idx", None)
+  frame_id = int(getattr(idx, "frameId", 0) or 0)
+  timestamp_ns = int(getattr(idx, "timestampEof", 0) or 0)
+  flags = int(getattr(idx, "flags", 0) or 0)
+  width = int(getattr(encoded, "width", 0) or 0)
+  height = int(getattr(encoded, "height", 0) or 0)
+  if frame_id <= 0 or timestamp_ns <= 0 or width <= 0 or height <= 0:
+    return None
+  keyframe = bool(header) or bool(flags & 0x8)
+  packet = encode_h264_frame(H264Frame(
+    frame_id=frame_id,
+    source_timestamp_monotonic_ns=timestamp_ns,
+    width=width,
+    height=height,
+    keyframe=keyframe,
+    codec_config=header if keyframe else b"",
+    data=data,
+  ))
+  return packet, keyframe
+
+
 class RoadFrameCapture:
   def __init__(self, server: VideoFrameTcpServer, *, fps: int = DEFAULT_FRAME_FPS,
-               jpeg_quality: int = DEFAULT_JPEG_QUALITY) -> None:
+               jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+               should_encode: Callable[[], bool] | None = None) -> None:
     self.server = server
     self.fps = fps
     self.jpeg_quality = jpeg_quality
+    self.should_encode = should_encode
     self._stop = threading.Event()
     self._thread: threading.Thread | None = None
 
@@ -207,6 +331,9 @@ class RoadFrameCapture:
     next_frame_at = 0.0
     while not self._stop.is_set():
       if not self.server.client_connected.wait(timeout=0.25):
+        continue
+      if self.should_encode is not None and not self.should_encode():
+        self._stop.wait(0.02)
         continue
       if not client.is_connected():
         if not client.connect(False):
@@ -234,3 +361,70 @@ class RoadFrameCapture:
         continue
       self.server.slot.put(packet)
       next_frame_at = now + 1.0 / self.fps
+
+
+class H264FrameCapture:
+  """Relays every encoded access unit and restarts only from an IDR after a gap."""
+
+  def __init__(self, server: VideoFrameTcpServer, messaging_module: Any | None = None,
+               *, source: str = H264_SOURCE) -> None:
+    self.server = server
+    self.messaging = messaging_module
+    self.source = source
+    self._stop = threading.Event()
+    self._thread: threading.Thread | None = None
+    self._last_frame_at = 0.0
+
+  @property
+  def is_recent(self) -> bool:
+    return self._last_frame_at > 0.0 and (time.monotonic() - self._last_frame_at) < H264_FALLBACK_TIMEOUT_S
+
+  def start(self) -> None:
+    if self._thread is None:
+      self._thread = threading.Thread(target=self._run, name="external-ai-h264-capture", daemon=True)
+      self._thread.start()
+
+  def stop(self) -> None:
+    self._stop.set()
+    if self._thread is not None:
+      self._thread.join(timeout=2.0)
+    self._thread = None
+
+  def _run(self) -> None:
+    if self.messaging is None:
+      from openpilot.cereal import messaging as messaging_module
+      self.messaging = messaging_module
+    sock = None
+    try:
+      while not self._stop.is_set():
+        if not self.server.client_connected.wait(timeout=0.25):
+          if sock is not None:
+            sock.close()
+            sock = None
+          continue
+        if sock is None:
+          sock = self.messaging.sub_sock(self.source, conflate=False)
+        message = self.messaging.recv_one_or_none(sock)
+        if message is None:
+          self._stop.wait(0.005)
+          continue
+        encoded = getattr(message, self.source, None)
+        if encoded is None:
+          continue
+        try:
+          encoded_packet = h264_packet_from_encode_data(encoded)
+        except Exception as exc:
+          print(f"External AI H.264 packet rejected: {exc}", flush=True)
+          continue
+        if encoded_packet is None:
+          continue
+        packet, keyframe = encoded_packet
+        slot = self.server.slot
+        if isinstance(slot, AdaptiveFrameQueue):
+          slot.put(packet, encoding="h264", keyframe=keyframe)
+        else:
+          slot.put(packet)
+        self._last_frame_at = time.monotonic()
+    finally:
+      if sock is not None:
+        sock.close()

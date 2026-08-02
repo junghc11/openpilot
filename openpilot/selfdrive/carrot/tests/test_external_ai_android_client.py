@@ -60,7 +60,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.6.0"' in gradle
+  assert 'versionName = "0.7.0"' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
@@ -120,7 +120,8 @@ def test_android_discovery_is_bounded_to_private_subnets_and_carrot_port() -> No
   assert "MAX_SUBNETS = 2" in discovery
   assert "isCarrotFrameServer(candidate, framePort)" in discovery
   assert "socket.connect(InetSocketAddress(host, framePort), CONNECT_TIMEOUT_MS)" in discovery
-  assert "magic.contentEquals(FRAME_MAGIC)" in discovery
+  assert "SUPPORTED_FRAME_MAGICS.any(magic::contentEquals)" in discovery
+  assert "'2'.code.toByte()" in discovery
   assert "SCAN_WORKERS = 24" in discovery
   assert "CONNECT_TIMEOUT_MS = 300" in discovery
   assert "READ_TIMEOUT_MS = 1_000" in discovery
@@ -141,6 +142,23 @@ def test_android_client_holds_performance_locks_only_while_connected() -> None:
   assert "MIN_DISCOVERY_RETRY_DELAY_MS = 5_000L" in service
   assert "MAX_DISCOVERY_RETRY_DELAY_MS = 30_000L" in service
   assert "START_NOT_STICKY" in service
+
+
+def test_android_client_decodes_local_h264_with_mediacodec_and_keeps_jpeg_fallback() -> None:
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+  protocol = (JAVA_ROOT / "FrameProtocol.kt").read_text(encoding="utf-8")
+  decoder = (JAVA_ROOT / "ReusableH264Decoder.kt").read_text(encoding="utf-8")
+
+  assert 'ENCODING_H264 = "h264"' in protocol
+  assert "h264Magic" in protocol
+  assert "codec_config_size" in protocol
+  assert "ReusableH264Decoder().use" in service
+  assert "ReusableJpegDecoder().use" in service
+  assert "MediaCodec.createDecoderByType" in decoder
+  assert "MediaFormat.KEY_LOW_LATENCY" in decoder
+  assert "ImageFormat.YUV_420_888" in decoder
+  assert "BUFFER_FLAG_KEY_FRAME" in decoder
+  assert "H.264 HW" in service
 
 
 def test_android_readmes_document_discovery_model_selection_and_power() -> None:
@@ -164,7 +182,7 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "AGPL-3.0 또는 Enterprise",
     "nms=False dynamic=False batch=1",
     "같은 사설 IPv4 `/24`",
-    "Carrot 프레임 서명 `CAI1`",
+    "JPEG `CAI1` 또는 H.264 `CAI2`",
     "ExternalAIPhoneIP",
     "YOLO 모델이나 NPU 세션을 열지 않고",
     "부팅 자동 시작은 하지 않습니다",
@@ -184,7 +202,7 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "AGPL-3.0 or Enterprise",
     "nms=False dynamic=False batch=1",
     "local private IPv4 `/24`",
-    "Carrot frame signature `CAI1`",
+    "JPEG `CAI1` or H.264 `CAI2`",
     "does not open the YOLO model or NPU session",
     "It does not start at boot",
   ):

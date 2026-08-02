@@ -69,6 +69,17 @@ struct EncoderSettings {
     };
   }
 
+  static EncoderSettings ExternalAIEncoderSettings() {
+    return EncoderSettings{
+      .encode_type = cereal::EncodeIndex::Type::QCAMERA_H264,
+      .bitrate = 750'000,
+      .gop_size = 15,
+      .cbr = true,
+      .frame_width = 854,
+      .frame_height = 480,
+    };
+  }
+
   static EncoderSettings YouTubeMediumEncoderSettings() {
     return EncoderSettings{
       .encode_type = cereal::EncodeIndex::Type::QCAMERA_H264,
@@ -182,6 +193,16 @@ const EncoderInfo youtube_road_low_encoder_info = {
   INIT_ENCODE_FUNCTIONS(YoutubeRoadEncode),
 };
 
+// The local phone stream deliberately shares youtubeRoadEncodeData. This lets
+// External AI reuse an already-running YouTube encoder instead of opening a
+// second Qualcomm video session when both features are active.
+const EncoderInfo external_ai_road_encoder_info = {
+  .publish_name = "youtubeRoadEncodeData",
+  .record = false,
+  .get_settings = [](int){return EncoderSettings::ExternalAIEncoderSettings();},
+  INIT_ENCODE_FUNCTIONS(YoutubeRoadEncode),
+};
+
 const EncoderInfo youtube_road_medium_encoder_info = {
   .publish_name = "youtubeRoadEncodeData",
   .record = false,
@@ -266,6 +287,12 @@ const LogCameraInfo youtube_road_low_camera_info{
   .encoder_infos = {youtube_road_low_encoder_info}
 };
 
+const LogCameraInfo external_ai_road_camera_info{
+  .thread_name = "external_ai_road_encoder",
+  .stream_type = VISION_STREAM_ROAD,
+  .encoder_infos = {external_ai_road_encoder_info}
+};
+
 const LogCameraInfo youtube_road_medium_camera_info{
   .thread_name = "youtube_road_medium_encoder",
   .stream_type = VISION_STREAM_ROAD,
@@ -288,6 +315,7 @@ const LogCameraInfo cameras_logged[] = {road_camera_info, wide_road_camera_info,
 const LogCameraInfo stream_cameras_logged[] = {stream_road_camera_info, stream_wide_road_camera_info, stream_driver_camera_info};
 const LogCameraInfo carrot_vision_cameras_logged[] = {carrot_vision_road_camera_info};
 const LogCameraInfo youtube_low_cameras_logged[] = {youtube_road_low_camera_info};
+const LogCameraInfo external_ai_cameras_logged[] = {external_ai_road_camera_info};
 const LogCameraInfo youtube_medium_cameras_logged[] = {youtube_road_medium_camera_info};
 const LogCameraInfo youtube_cameras_logged[] = {youtube_road_camera_info};
 const LogCameraInfo youtube_wide_cameras_logged[] = {youtube_wide_road_camera_info};

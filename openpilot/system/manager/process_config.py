@@ -153,6 +153,17 @@ def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
 def enable_external_ai(started, params, CP: car.CarParams) -> bool:
   return started and params.get_bool("ExternalAIEnabled")
 
+def enable_external_ai_h264_encoder(started, params, CP: car.CarParams) -> bool:
+  try:
+    return (
+      started
+      and params.get_bool("ExternalAIEnabled")
+      and params.get_int("ExternalAITransport") == 1
+      and params.get_int("CarrotYouTubeLive") <= 0
+    )
+  except Exception:
+    return False
+
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
@@ -163,6 +174,7 @@ procs = [
   NativeProcess("stream_encoderd", "openpilot/system/loggerd", ["./encoderd", "--stream"], notcar),
   NativeProcess("carrot_vision_encoderd", "openpilot/system/loggerd", ["./encoderd", "--carrot-vision-road"], and_(iscar, enable_webrtc, carrot_vision_active)),
   NativeProcess("youtube_low_encoderd", "openpilot/system/loggerd", ["./encoderd", "--youtube-low"], and_(only_onroad, enable_youtube_low_encoder)),
+  NativeProcess("external_ai_encoderd", "openpilot/system/loggerd", ["./encoderd", "--external-ai"], and_(only_onroad, enable_external_ai_h264_encoder)),
   NativeProcess("youtube_medium_encoderd", "openpilot/system/loggerd", ["./encoderd", "--youtube-medium"], and_(only_onroad, enable_youtube_medium_encoder)),
   NativeProcess("youtube_encoderd", "openpilot/system/loggerd", ["./encoderd", "--youtube"], and_(only_onroad, enable_youtube_encoder)),
   NativeProcess("youtube_wide_encoderd", "openpilot/system/loggerd", ["./encoderd", "--youtube-wide"], and_(only_onroad, enable_youtube_wide_encoder)),

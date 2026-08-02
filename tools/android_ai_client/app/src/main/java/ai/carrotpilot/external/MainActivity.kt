@@ -160,7 +160,7 @@ class MainActivity : Activity() {
     framePort = addField(root, "영상 TCP 포트", "7724")
     resultPort = addField(root, "결과 UDP 포트", "7725")
     threshold = addField(root, "신뢰도 임계값 (0.1~0.95)", "0.35")
-    inferenceFps = addField(root, "목표 추론 FPS (1~15)", "5")
+    inferenceFps = addField(root, "목표 추론 FPS (1~20)", "5")
     inputSize = addField(root, "YOLO 입력 크기 (320/416/640 · 권장 320)", "320")
 
     modelLabel = TextView(this).apply {
@@ -435,7 +435,7 @@ data class ClientConfig(
     require(framePort in 1..65535) { "영상 포트는 1~65535 범위여야 합니다." }
     require(resultPort in 1..65535) { "결과 포트는 1~65535 범위여야 합니다." }
     require(threshold in 0.1f..0.95f) { "신뢰도는 0.1~0.95 범위여야 합니다." }
-    require(targetFps in 1..15) { "추론 FPS는 1~15 범위여야 합니다." }
+    require(targetFps in 1..20) { "추론 FPS는 1~20 범위여야 합니다." }
     require(inputSize in YoloDetector.SUPPORTED_INPUT_SIZES) { "YOLO 입력 크기는 320, 416, 640 중 하나여야 합니다." }
   }
 }

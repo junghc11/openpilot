@@ -102,20 +102,25 @@ def test_external_hud_brightness_and_orientation_use_catalog_controls(settings, 
 def test_external_ai_settings_are_exposed_in_display_catalog(settings, params):
   by_name = {p["name"]: p for p in params}
   enabled = by_name["ExternalAIEnabled"]
+  transport = by_name["ExternalAITransport"]
   overlay = by_name["ExternalAIShowOverlay"]
 
   assert (enabled["min"], enabled["max"], enabled["default"]) == (0, 1, 0)
   assert enabled["control"] == "toggle"
   assert enabled["risk"] == "medium"
+  assert (transport["min"], transport["max"], transport["default"]) == (0, 1, 1)
+  assert transport["control"] == "select"
+  assert transport["options"]["en"] == ["JPEG compatibility", "H.264 recommended"]
   assert (overlay["min"], overlay["max"], overlay["default"]) == (0, 1, 1)
   assert overlay["control"] == "toggle"
 
   display = next(category for category in settings["menu"] if category["id"] == "DISPLAY")
   external_ai = next(group for group in display["groups"] if group["id"] == "DISP_EXTERNAL_AI")
-  assert external_ai["params"] == ["ExternalAIEnabled", "ExternalAIShowOverlay"]
+  assert external_ai["params"] == ["ExternalAIEnabled", "ExternalAITransport", "ExternalAIShowOverlay"]
 
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"ExternalAIEnabled", {PERSISTENT, BOOL, "0"}}' in params_keys
+  assert '{"ExternalAITransport", {PERSISTENT, INT, "1"}}' in params_keys
   assert '{"ExternalAIShowOverlay", {PERSISTENT, BOOL, "1"}}' in params_keys
 
 

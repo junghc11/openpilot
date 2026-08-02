@@ -206,6 +206,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ExternalAIResultPort", {PERSISTENT, INT, "7725"}},
     {"ExternalAIFrameFPS", {PERSISTENT, INT, "5"}},
     {"ExternalAIJpegQuality", {PERSISTENT, INT, "75"}},
+    {"ExternalAITransport", {PERSISTENT, INT, "1"}},
     {"ExternalAIMaxLatencyMs", {PERSISTENT, INT, "300"}},
     {"ExternalAIShowOverlay", {PERSISTENT, BOOL, "1"}},
     {"ExternalAIDebug", {PERSISTENT, BOOL, "0"}},

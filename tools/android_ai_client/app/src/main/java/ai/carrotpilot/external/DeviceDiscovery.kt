@@ -99,15 +99,18 @@ object DeviceDiscovery {
     Socket().use { socket ->
       socket.soTimeout = READ_TIMEOUT_MS
       socket.connect(InetSocketAddress(host, framePort), CONNECT_TIMEOUT_MS)
-      val magic = ByteArray(FRAME_MAGIC.size)
+      val magic = ByteArray(4)
       DataInputStream(socket.getInputStream()).readFully(magic)
-      magic.contentEquals(FRAME_MAGIC)
+      SUPPORTED_FRAME_MAGICS.any(magic::contentEquals)
     }
   } catch (_: Exception) {
     false
   }
 
-  private val FRAME_MAGIC = byteArrayOf('C'.code.toByte(), 'A'.code.toByte(), 'I'.code.toByte(), '1'.code.toByte())
+  private val SUPPORTED_FRAME_MAGICS = listOf(
+    byteArrayOf('C'.code.toByte(), 'A'.code.toByte(), 'I'.code.toByte(), '1'.code.toByte()),
+    byteArrayOf('C'.code.toByte(), 'A'.code.toByte(), 'I'.code.toByte(), '2'.code.toByte()),
+  )
   private const val MAX_SUBNETS = 2
   private const val SCAN_WORKERS = 24
   private const val CONNECT_TIMEOUT_MS = 300

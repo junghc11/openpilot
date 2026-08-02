@@ -6,6 +6,7 @@ from openpilot.selfdrive.carrot.external_ai.protocol import parse_external_ai_re
 from openpilot.selfdrive.carrot.external_ai.receiver import ExternalAIReceiverStats
 from openpilot.selfdrive.carrot.external_ai.state import build_phone_ai_payload
 from openpilot.selfdrive.carrot.external_ai.phoneaid import PhoneAIDaemon
+from openpilot.selfdrive.carrot.external_ai.frame_sender import AdaptiveFrameQueue, LatestFrameSlot
 
 
 OPENPILOT_ROOT = Path(__file__).resolve().parents[3]
@@ -93,9 +94,20 @@ def test_phone_ai_cereal_service_uses_reserved_fork_slot() -> None:
 def test_external_ai_is_disabled_by_default_and_manager_gated() -> None:
   params_keys = (OPENPILOT_ROOT / "common" / "params_keys.h").read_text(encoding="utf-8")
   process_config = (OPENPILOT_ROOT / "system" / "manager" / "process_config.py").read_text(encoding="utf-8")
+  loggerd = (OPENPILOT_ROOT / "system" / "loggerd" / "loggerd.h").read_text(encoding="utf-8")
+  encoderd = (OPENPILOT_ROOT / "system" / "loggerd" / "encoderd.cc").read_text(encoding="utf-8")
 
   assert '{"ExternalAIEnabled", {PERSISTENT, BOOL, "0"}}' in params_keys
+  assert '{"ExternalAITransport", {PERSISTENT, INT, "1"}}' in params_keys
   assert 'return started and params.get_bool("ExternalAIEnabled")' in process_config
+  assert 'NativeProcess("external_ai_encoderd"' in process_config
+  assert '["./encoderd", "--external-ai"]' in process_config
+  external_profile = loggerd.split("static EncoderSettings ExternalAIEncoderSettings", 1)[1].split("static EncoderSettings", 1)[0]
+  assert ".bitrate = 750'000" in external_profile
+  assert ".gop_size = 15" in external_profile
+  assert ".frame_width = 854" in external_profile
+  assert ".frame_height = 480" in external_profile
+  assert 'mode == "--external-ai"' in encoderd
   assert 'PythonProcess("phoneaid", "openpilot.selfdrive.carrot.external_ai.phoneaid"' in process_config
 
 
@@ -133,3 +145,36 @@ def test_phoneaid_publishes_cereal_payload_with_injected_runtime() -> None:
   assert payload["valid"] is False
   assert daemon.pm.sent[0][0] == "phoneAIState"
   assert daemon.pm.sent[0][1].phoneAIState == payload
+
+
+def test_phoneaid_selects_h264_queue_and_avoids_incompatible_youtube_profiles() -> None:
+  class FakeParams:
+    def __init__(self, transport, youtube_live, youtube_quality):
+      self.values = {
+        "ExternalAITransport": transport,
+        "CarrotYouTubeLive": youtube_live,
+        "CarrotYouTubeQuality": youtube_quality,
+      }
+
+    def get_int(self, name):
+      return self.values.get(name, 0)
+
+    def get(self, name):
+      return b""
+
+  class FakeMessaging:
+    class PubMaster:
+      def __init__(self, services):
+        assert services == ["phoneAIState"]
+
+  h264 = PhoneAIDaemon(params=FakeParams(1, 0, 0), messaging_module=FakeMessaging)
+  assert isinstance(h264.frame_server.slot, AdaptiveFrameQueue)
+  assert h264.h264_capture is not None
+
+  youtube_high = PhoneAIDaemon(params=FakeParams(1, 1, 2), messaging_module=FakeMessaging)
+  assert isinstance(youtube_high.frame_server.slot, LatestFrameSlot)
+  assert youtube_high.h264_capture is None
+
+  jpeg = PhoneAIDaemon(params=FakeParams(0, 0, 0), messaging_module=FakeMessaging)
+  assert isinstance(jpeg.frame_server.slot, LatestFrameSlot)
+  assert jpeg.h264_capture is None

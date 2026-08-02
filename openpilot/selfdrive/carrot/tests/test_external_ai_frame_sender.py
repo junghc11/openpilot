@@ -5,8 +5,14 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from openpilot.selfdrive.carrot.external_ai.frame_protocol import VideoFrame, encode_video_frame, receive_video_frame
-from openpilot.selfdrive.carrot.external_ai.frame_sender import LatestFrameSlot, VideoFrameTcpServer, nv12_to_jpeg
+from openpilot.selfdrive.carrot.external_ai.frame_protocol import H264Frame, VideoFrame, encode_video_frame, receive_encoded_video_frame, receive_video_frame
+from openpilot.selfdrive.carrot.external_ai.frame_sender import (
+  AdaptiveFrameQueue,
+  LatestFrameSlot,
+  VideoFrameTcpServer,
+  h264_packet_from_encode_data,
+  nv12_to_jpeg,
+)
 
 
 def frame(frame_id: int) -> VideoFrame:
@@ -19,6 +25,51 @@ def test_latest_frame_slot_replaces_pending_frame() -> None:
   slot.put(b"new")
   assert slot.wait_after(0, 0.0) == (2, b"new")
   assert slot.frames_replaced == 1
+
+
+def test_h264_queue_waits_for_keyframe_and_keeps_access_units_ordered() -> None:
+  queue = AdaptiveFrameQueue(max_h264_frames=4, max_h264_bytes=100)
+  queue.put(b"orphan-p", encoding="h264", keyframe=False)
+  assert queue.wait_after(0, 0.0) is None
+  queue.put(b"idr", encoding="h264", keyframe=True)
+  queue.put(b"p1", encoding="h264", keyframe=False)
+  queue.put(b"p2", encoding="h264", keyframe=False)
+
+  assert queue.wait_after(0, 0.0)[1] == b"idr"
+  assert queue.wait_after(0, 0.0)[1] == b"p1"
+  assert queue.wait_after(0, 0.0)[1] == b"p2"
+
+
+def test_h264_queue_overflow_resumes_only_at_next_keyframe() -> None:
+  queue = AdaptiveFrameQueue(max_h264_frames=2, max_h264_bytes=100)
+  queue.put(b"idr-1", encoding="h264", keyframe=True)
+  queue.put(b"p1", encoding="h264", keyframe=False)
+  queue.put(b"overflow", encoding="h264", keyframe=False)
+  queue.put(b"p-after-gap", encoding="h264", keyframe=False)
+  assert queue.wait_after(0, 0.0) is None
+
+  queue.put(b"idr-2", encoding="h264", keyframe=True)
+  assert queue.wait_after(0, 0.0)[1] == b"idr-2"
+
+
+def test_encode_data_is_framed_with_c3x_timestamp_and_codec_config() -> None:
+  encoded = SimpleNamespace(
+    data=b"idr",
+    header=b"sps-pps",
+    width=854,
+    height=480,
+    idx=SimpleNamespace(frameId=91, timestampEof=8_100_000_000, flags=0x8),
+  )
+  packet, keyframe = h264_packet_from_encode_data(encoded)
+  reader, writer = socket.socketpair()
+  try:
+    writer.sendall(packet)
+    frame = receive_encoded_video_frame(reader)
+  finally:
+    reader.close()
+    writer.close()
+  assert keyframe is True
+  assert frame == H264Frame(91, 8_100_000_000, 854, 480, True, b"sps-pps", b"idr")
 
 
 def test_tcp_server_sends_framed_video_to_phone_client() -> None:

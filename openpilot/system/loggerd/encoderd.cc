@@ -156,14 +156,15 @@ void encoderd_thread(const LogCameraInfo (&cameras)[N]) {
 int main(int argc, char* argv[]) {
   const std::string mode = argc > 1 ? argv[1] : "";
   const bool carrot_vision_mode = mode == "--carrot-vision-road";
+  const bool external_ai_mode = mode == "--external-ai";
   if (!Hardware::PC()) {
     int ret;
     ret = util::set_realtime_priority(52);
     assert(ret == 0);
     // Main/logging encoders keep their established core 3 placement. The
-    // independent Carrot Vision encoder uses core 0 so its real-time feed does
-    // not queue behind the regular encoderd threads or run on the UI core.
-    ret = util::set_core_affinity({carrot_vision_mode ? 0 : 3});
+    // Independent local-stream encoders use core 0 so their real-time feeds do
+    // not queue behind regular loggerd encoders or run on the UI core.
+    ret = util::set_core_affinity({(carrot_vision_mode || external_ai_mode) ? 0 : 3});
     assert(ret == 0);
   }
   if (argc > 1) {
@@ -173,6 +174,8 @@ int main(int argc, char* argv[]) {
       encoderd_thread(carrot_vision_cameras_logged);
     } else if (mode == "--youtube-low") {
       encoderd_thread(youtube_low_cameras_logged);
+    } else if (mode == "--external-ai") {
+      encoderd_thread(external_ai_cameras_logged);
     } else if (mode == "--youtube-medium") {
       encoderd_thread(youtube_medium_cameras_logged);
     } else if (mode == "--youtube") {

@@ -25,7 +25,6 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.max
 
 class ExternalAIService : Service() {
   @Volatile private var runToken: AtomicBoolean? = null
@@ -77,7 +76,7 @@ class ExternalAIService : Service() {
     try {
       while (token.get()) {
         val targetHost = if (config.autoDiscover) {
-          updateStatus("같은 사설망에서 CarrotPilot 기기 검색 중\nTCP ${config.framePort} / CAI1 확인")
+          updateStatus("같은 사설망에서 CarrotPilot 기기 검색 중\nTCP ${config.framePort} / CAI1·CAI2 확인")
           DeviceDiscovery.findHost(config.framePort, config.host) { token.get() }
         } else {
           config.host
@@ -165,59 +164,82 @@ class ExternalAIService : Service() {
     var statusWindowStartNs = SystemClock.elapsedRealtimeNanos()
     val performanceStats = RollingPerformanceStats()
     var lastObjects = 0
+    var lastTransport = "대기"
+    var previousEncoding = ""
     ReusableJpegDecoder().use { jpegDecoder ->
-      while (token.get()) {
-        val frame = FrameProtocol.readFrame(input)
-        receivedCount++
-        val nowNs = SystemClock.elapsedRealtimeNanos()
-        if (nowNs - lastInferenceStartNs < targetIntervalNs) continue
-        val decodeStartNs = SystemClock.elapsedRealtimeNanos()
-        val bitmap = jpegDecoder.decode(frame.jpeg)
-        val decodeEndNs = SystemClock.elapsedRealtimeNanos()
-        val inferenceStartNs = decodeEndNs
-        val detectionResult = detector.detect(bitmap)
-        val inferenceEndNs = SystemClock.elapsedRealtimeNanos()
-        lastInferenceStartNs = inferenceStartNs
-        val performance = FramePerformance(
-          decodeMs = nanosToMillis(decodeEndNs - decodeStartNs),
-          preprocessMs = detectionResult.preprocessMs,
-          runtimeMs = detectionResult.runtimeMs,
-          postprocessMs = detectionResult.postprocessMs,
-          phoneTotalMs = nanosToMillis(inferenceEndNs - frame.phoneReceiveTimestampNs),
-        )
-        performanceStats.add(performance)
-        inferenceCount++
-        lastObjects = detectionResult.detections.size
-        FrameProtocol.sendResult(
-          resultSocket,
-          resultAddress,
-          config.resultPort,
-          frame,
-          inferenceStartNs,
-          inferenceEndNs,
-          detectionResult,
-          performance,
-          modelName,
-          detector.backend,
-        )
+      ReusableH264Decoder().use { h264Decoder ->
+        while (token.get()) {
+          val receivedFrame = FrameProtocol.readFrame(input)
+          receivedCount++
+          if (receivedFrame.encoding != previousEncoding) {
+            if (receivedFrame.encoding == FrameProtocol.ENCODING_JPEG) h264Decoder.reset()
+            previousEncoding = receivedFrame.encoding
+          }
+          val nowNs = SystemClock.elapsedRealtimeNanos()
+          val wantInference = nowNs - lastInferenceStartNs >= targetIntervalNs
+          val decodeStartNs = SystemClock.elapsedRealtimeNanos()
+          val inferenceFrame: C3XFrame
+          val bitmap = when (receivedFrame.encoding) {
+            FrameProtocol.ENCODING_JPEG -> {
+              if (!wantInference) continue
+              inferenceFrame = receivedFrame
+              jpegDecoder.decode(receivedFrame.data)
+            }
+            FrameProtocol.ENCODING_H264 -> {
+              val decoded = h264Decoder.decode(receivedFrame, wantInference) ?: continue
+              inferenceFrame = decoded.frame
+              decoded.bitmap
+            }
+            else -> error("지원하지 않는 영상 인코딩: ${receivedFrame.encoding}")
+          }
+          val decodeEndNs = SystemClock.elapsedRealtimeNanos()
+          val inferenceStartNs = decodeEndNs
+          val detectionResult = detector.detect(bitmap)
+          val inferenceEndNs = SystemClock.elapsedRealtimeNanos()
+          lastInferenceStartNs = inferenceStartNs
+          lastTransport = if (inferenceFrame.encoding == FrameProtocol.ENCODING_H264) "H.264 HW" else "JPEG"
+          val performance = FramePerformance(
+            decodeMs = nanosToMillis(decodeEndNs - decodeStartNs),
+            preprocessMs = detectionResult.preprocessMs,
+            runtimeMs = detectionResult.runtimeMs,
+            postprocessMs = detectionResult.postprocessMs,
+            phoneTotalMs = nanosToMillis(inferenceEndNs - inferenceFrame.phoneReceiveTimestampNs),
+          )
+          performanceStats.add(performance)
+          inferenceCount++
+          lastObjects = detectionResult.detections.size
+          FrameProtocol.sendResult(
+            resultSocket,
+            resultAddress,
+            config.resultPort,
+            inferenceFrame,
+            inferenceStartNs,
+            inferenceEndNs,
+            detectionResult,
+            performance,
+            modelName,
+            detector.backend,
+          )
 
-        val windowNs = inferenceEndNs - statusWindowStartNs
-        if (windowNs >= 1_000_000_000L) {
-          val seconds = windowNs / 1_000_000_000.0
-          updateStatus(buildStatus(
-            config = config,
-            targetHost = targetHost,
-            receiveFps = receivedCount / seconds,
-            inferenceFps = inferenceCount / seconds,
-            performance = performanceStats.summary(),
-            inputWidth = detector.inputWidth,
-            inputHeight = detector.inputHeight,
-            objectCount = lastObjects,
-            backendLabel = detector.backendLabel,
-          ))
-          receivedCount = 0
-          inferenceCount = 0
-          statusWindowStartNs = inferenceEndNs
+          val windowNs = inferenceEndNs - statusWindowStartNs
+          if (windowNs >= 1_000_000_000L) {
+            val seconds = windowNs / 1_000_000_000.0
+            updateStatus(buildStatus(
+              config = config,
+              targetHost = targetHost,
+              receiveFps = receivedCount / seconds,
+              inferenceFps = inferenceCount / seconds,
+              performance = performanceStats.summary(),
+              inputWidth = detector.inputWidth,
+              inputHeight = detector.inputHeight,
+              objectCount = lastObjects,
+              backendLabel = detector.backendLabel,
+              transportLabel = lastTransport,
+            ))
+            receivedCount = 0
+            inferenceCount = 0
+            statusWindowStartNs = inferenceEndNs
+          }
         }
       }
     }
@@ -233,6 +255,7 @@ class ExternalAIService : Service() {
     inputHeight: Int,
     objectCount: Int,
     backendLabel: String,
+    transportLabel: String,
   ): String {
     val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val batteryTemp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
@@ -240,7 +263,7 @@ class ExternalAIService : Service() {
     return "연결됨: $targetHost:${config.framePort}\n" +
       "입력 ${inputWidth}×${inputHeight} · 수신 ${"%.1f".format(receiveFps)} · 처리 ${"%.1f".format(inferenceFps)} FPS\n" +
       "폰 처리 평균 ${"%.1f".format(performance.averagePhoneTotalMs)} · p95 ${"%.1f".format(performance.p95PhoneTotalMs)} ms\n" +
-      "JPEG ${"%.1f".format(performance.averageDecodeMs)} · 전처리 ${"%.1f".format(performance.averagePreprocessMs)} · ORT ${"%.1f".format(performance.averageRuntimeMs)} · 후처리 ${"%.1f".format(performance.averagePostprocessMs)} ms\n" +
+      "$transportLabel 디코드 ${"%.1f".format(performance.averageDecodeMs)} · 전처리 ${"%.1f".format(performance.averagePreprocessMs)} · ORT ${"%.1f".format(performance.averageRuntimeMs)} · 후처리 ${"%.1f".format(performance.averagePostprocessMs)} ms\n" +
       "객체 ${objectCount}개 · 표본 ${performance.samples}개\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
       "열 상태 ${thermalStatusLabel(thermalStatus)}($thermalStatus) · 총 지연은 C3X에서 측정"
@@ -409,7 +432,7 @@ private data class ServiceConfig(
       framePort = intent.getIntExtra(ExternalAIService.EXTRA_FRAME_PORT, 7724),
       resultPort = intent.getIntExtra(ExternalAIService.EXTRA_RESULT_PORT, 7725),
       threshold = intent.getFloatExtra(ExternalAIService.EXTRA_THRESHOLD, 0.35f),
-      targetFps = max(1, intent.getIntExtra(ExternalAIService.EXTRA_TARGET_FPS, 5)),
+      targetFps = intent.getIntExtra(ExternalAIService.EXTRA_TARGET_FPS, 5).coerceIn(1, 20),
       inputSize = intent.getIntExtra(ExternalAIService.EXTRA_INPUT_SIZE, 320).also {
         require(it in YoloDetector.SUPPORTED_INPUT_SIZES) { "YOLO 입력 크기는 320, 416, 640 중 하나여야 합니다." }
       },

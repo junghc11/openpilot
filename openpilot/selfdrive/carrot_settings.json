@@ -466,6 +466,7 @@
           "zh": "外部 AI",
           "params": [
             "ExternalAIEnabled",
+            "ExternalAITransport",
             "ExternalAIShowOverlay"
           ]
         },
@@ -2055,6 +2056,29 @@
       "default": 0,
       "unit": 1,
       "control": "toggle",
+      "risk": "medium"
+    },
+    {
+      "group": "외부 AI",
+      "name": "ExternalAITransport",
+      "title": "외부 AI 영상 전송 방식(1)",
+      "descr": "스마트폰으로 보내는 영상 형식을 선택합니다. H.264는 C3/C3X/C4 하드웨어 인코더를 사용하며 준비되지 않으면 JPEG로 자동 전환합니다. 변경 후 현재 주행을 끝내고 다시 시작해야 적용됩니다.\n0: JPEG 호환\n1: H.264 권장",
+      "egroup": "EXTERNAL AI",
+      "etitle": "External AI Video Transport(1)",
+      "edescr": "Select the video format sent to the phone. H.264 uses the C3/C3X/C4 hardware encoder and automatically falls back to JPEG when unavailable. End the current drive and start again after changing it.\n0: JPEG compatibility\n1: H.264 recommended",
+      "cgroup": "外部 AI",
+      "ctitle": "外部 AI 视频传输方式(1)",
+      "cdescr": "选择发送到手机的视频格式。H.264 使用 C3/C3X/C4 硬件编码器；不可用时自动回退到 JPEG。更改后请结束当前行程并重新开始。\n0：JPEG 兼容\n1：推荐 H.264",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": ["JPEG 호환", "H.264 권장"],
+        "en": ["JPEG compatibility", "H.264 recommended"],
+        "zh": ["JPEG 兼容", "H.264 推荐"]
+      },
       "risk": "medium"
     },
     {

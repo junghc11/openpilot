@@ -8,9 +8,11 @@ from openpilot.selfdrive.carrot.external_ai.protocol import (
   DEFAULT_MAX_LATENCY_MS,
 )
 from openpilot.selfdrive.carrot.external_ai.frame_sender import (
+  AdaptiveFrameQueue,
   DEFAULT_FRAME_FPS,
   DEFAULT_FRAME_PORT,
   DEFAULT_JPEG_QUALITY,
+  H264FrameCapture,
   RoadFrameCapture,
   VideoFrameTcpServer,
 )
@@ -20,6 +22,9 @@ from openpilot.selfdrive.carrot.external_ai.state import build_phone_ai_payload
 
 PUBLISH_INTERVAL_S = 0.1
 POLL_TIMEOUT_S = 0.05
+TRANSPORT_JPEG = 0
+TRANSPORT_H264 = 1
+DEFAULT_TRANSPORT = TRANSPORT_H264
 
 
 def _clamped_param_int(params: Any, name: str, default: int, minimum: int, maximum: int) -> int:
@@ -27,7 +32,9 @@ def _clamped_param_int(params: Any, name: str, default: int, minimum: int, maxim
     value = int(params.get_int(name))
   except Exception:
     value = default
-  return max(minimum, min(maximum, value or default))
+  if value == 0 and minimum > 0:
+    value = default
+  return max(minimum, min(maximum, value))
 
 
 def _param_text(params: Any, name: str) -> str:
@@ -67,8 +74,20 @@ class PhoneAIDaemon:
     frame_port = _clamped_param_int(self.params, "ExternalAIFramePort", DEFAULT_FRAME_PORT, 1, 65_535)
     frame_fps = _clamped_param_int(self.params, "ExternalAIFrameFPS", DEFAULT_FRAME_FPS, 1, 15)
     jpeg_quality = _clamped_param_int(self.params, "ExternalAIJpegQuality", DEFAULT_JPEG_QUALITY, 30, 95)
-    self.frame_server = VideoFrameTcpServer(port=frame_port, allowed_phone_ip=allowed_phone_ip)
-    self.frame_capture = RoadFrameCapture(self.frame_server, fps=frame_fps, jpeg_quality=jpeg_quality)
+    self.transport = _clamped_param_int(self.params, "ExternalAITransport", DEFAULT_TRANSPORT, TRANSPORT_JPEG, TRANSPORT_H264)
+    youtube_live = _clamped_param_int(self.params, "CarrotYouTubeLive", 0, 0, 1)
+    youtube_quality = _clamped_param_int(self.params, "CarrotYouTubeQuality", 0, 0, 3)
+    h264_source_compatible = youtube_live == 0 or youtube_quality == 0
+    use_h264 = self.transport == TRANSPORT_H264 and h264_source_compatible
+    queue = AdaptiveFrameQueue() if use_h264 else None
+    self.frame_server = VideoFrameTcpServer(port=frame_port, allowed_phone_ip=allowed_phone_ip, slot=queue)
+    self.h264_capture = H264FrameCapture(self.frame_server, messaging_module) if use_h264 else None
+    self.frame_capture = RoadFrameCapture(
+      self.frame_server,
+      fps=frame_fps,
+      jpeg_quality=jpeg_quality,
+      should_encode=(lambda: not self.h264_capture.is_recent) if self.h264_capture is not None else None,
+    )
     self.pm = messaging_module.PubMaster(["phoneAIState"])
 
   def publish_once(self, *, now_monotonic_ns: int | None = None) -> dict[str, object]:
@@ -85,6 +104,8 @@ class PhoneAIDaemon:
     self.receiver.open()
     try:
       self.frame_server.start()
+      if self.h264_capture is not None:
+        self.h264_capture.start()
       self.frame_capture.start()
       next_publish = 0.0
       while True:
@@ -95,6 +116,8 @@ class PhoneAIDaemon:
           next_publish = now + PUBLISH_INTERVAL_S
     finally:
       self.frame_capture.stop()
+      if self.h264_capture is not None:
+        self.h264_capture.stop()
       self.frame_server.stop()
       self.receiver.close()
 

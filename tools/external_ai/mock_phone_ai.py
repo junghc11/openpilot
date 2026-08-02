@@ -6,7 +6,7 @@ import json
 import socket
 import time
 
-from openpilot.selfdrive.carrot.external_ai.frame_protocol import receive_video_frame
+from openpilot.selfdrive.carrot.external_ai.frame_protocol import H264Frame, receive_encoded_video_frame
 
 
 DEFAULT_FRAME_PORT = 7724
@@ -87,7 +87,7 @@ def run_from_frames(host: str, frame_port: int, result_port: int, count: int) ->
     frame_socket.settimeout(5.0)
     print(f"mock phone connected to C3X video {host}:{frame_port}")
     while count <= 0 or received < count:
-      frame = receive_video_frame(frame_socket)
+      frame = receive_encoded_video_frame(frame_socket)
       result_socket.sendto(
         build_mock_result(frame.frame_id, frame.source_timestamp_monotonic_ns),
         (host, result_port),
@@ -97,7 +97,9 @@ def run_from_frames(host: str, frame_port: int, result_port: int, count: int) ->
         elapsed = max(0.001, time.monotonic() - started)
         print(
           f"mock phone received frame={frame.frame_id} {frame.width}x{frame.height} " +
-          f"jpeg={len(frame.jpeg)}B replied objects={len(MOCK_OBJECTS)} rate={received / elapsed:.1f}Hz",
+          f"encoding={'h264' if isinstance(frame, H264Frame) else 'jpeg'} " +
+          f"bytes={len(frame.data) if isinstance(frame, H264Frame) else len(frame.jpeg)} " +
+          f"replied objects={len(MOCK_OBJECTS)} rate={received / elapsed:.1f}Hz",
         )
 
 
