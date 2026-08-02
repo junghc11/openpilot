@@ -133,6 +133,16 @@ class MainActivity : Activity() {
       setTextColor(Color.LTGRAY)
       setPadding(0, 0, 0, (10 * density).toInt())
     })
+    root.addView(TextView(this).apply {
+      text = if (BuildConfig.QNN_EP_INCLUDED) {
+        "추론 우선순위: Qualcomm QNN/HTP 전체 그래프 → NNAPI → CPU"
+      } else {
+        "기본 빌드: NNAPI → CPU · QNN/HTP 런타임 미포함"
+      }
+      textSize = 13f
+      setTextColor(if (BuildConfig.QNN_EP_INCLUDED) Color.rgb(76, 175, 80) else Color.LTGRAY)
+      setPadding(0, 0, 0, (10 * density).toInt())
+    })
 
     autoConnect = CheckBox(this).apply {
       text = "앱 실행 시 같은 망 자동 검색 및 시작"

@@ -3,6 +3,10 @@ plugins {
   id("org.jetbrains.kotlin.android")
 }
 
+val qnnEpIncluded = providers.gradleProperty("carrotQnnEnabled")
+  .map { it.toBooleanStrict() }
+  .getOrElse(true)
+
 android {
   namespace = "ai.carrotpilot.external"
   compileSdk = 35
@@ -11,8 +15,9 @@ android {
     applicationId = "ai.carrotpilot.external"
     minSdk = 29
     targetSdk = 35
-    versionCode = 6
-    versionName = "0.5.0"
+    versionCode = 7
+    versionName = "0.6.0"
+    buildConfigField("boolean", "QNN_EP_INCLUDED", qnnEpIncluded.toString())
     ndk {
       abiFilters += "arm64-v8a"
     }
@@ -35,8 +40,16 @@ android {
     // This is a dedicated Qualcomm/ARM phone client, not a ChromeOS application.
     disable += "ChromeOsAbiSupport"
   }
+
+  packaging {
+    jniLibs.useLegacyPackaging = true
+  }
 }
 
 dependencies {
-  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+  if (qnnEpIncluded) {
+    implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")
+  } else {
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+  }
 }

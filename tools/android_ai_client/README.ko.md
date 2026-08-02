@@ -5,12 +5,12 @@
 ## 지원 환경과 모델
 
 - Android 10(API 29) 이상 64비트 ARM(`arm64-v8a`) 스마트폰
-- ONNX Runtime Android의 NNAPI 우선 실행과 CPU 자동 폴백
+- Qualcomm QNN/HTP 전체 그래프 우선 실행, NNAPI와 CPU 순서의 자동 폴백
 - Float32 NCHW 입력 `[1, 3, H, W]` 형식. 동적 H/W는 320·416·640 선택, 기본값 320
 - 표준 Ultralytics YOLOv8/YOLO11 출력 `[1, 84, N]` 또는 `[1, N, 84]`
 - person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign COCO 클래스
 
-NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. NNAPI 세션은 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. 지원되는 그래프는 스마트폰의 NPU·DSP·GPU에 배치될 수 있지만 일부 연산은 ONNX Runtime CPU와 혼합될 수 있습니다. 가속 세션 생성에 실패하면 전체 세션을 CPU로 다시 엽니다. Qualcomm QNN 직접 백엔드는 아직 포함하지 않습니다.
+NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. v0.6.0 기본 APK는 공식 ONNX Runtime QNN AAR과 Qualcomm QNN Runtime을 포함합니다. 먼저 HTP에서 전체 그래프를 열고, 한 연산이라도 CPU가 필요하면 `session.disable_cpu_ep_fallback=1`에 의해 QNN 세션을 거부한 뒤 NNAPI, 마지막으로 CPU 순서로 폴백합니다. NNAPI 세션은 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. NNAPI가 선택되면 지원되는 그래프가 NPU·DSP·GPU와 ORT CPU에 혼합 배치될 수 있습니다.
 
 YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 동적 입력 `YOLO11n Detection`, FP32 ONNX, 모델 내 NMS 미포함**입니다. 기본 320은 성능 우선, 416은 균형, 640은 작은 객체 품질 우선 시험값입니다. 입력 픽셀 수는 320이 640의 1/4이므로 먼저 320에서 지속 성능과 발열을 확인하세요. 정적 모델은 앱 선택값과 관계없이 모델 자체 입력 크기를 사용합니다. `YOLO11s/m/l/x`, YOLOv8 또는 직접 학습한 호환 모델도 선택할 수 있지만 성능·출력 형식은 별도 검증이 필요합니다. YOLO26 end-to-end, segmentation, pose, classification, OBB 모델은 현재 지원하지 않습니다.
 
@@ -22,7 +22,7 @@ YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 �
 yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True nms=False dynamic=False batch=1
 ```
 
-공식 모델은 Ultralytics AGPL-3.0 또는 Enterprise 조건이 적용됩니다. 다운로드 확인창의 라이선스 링크를 검토하고 사용 범위에 맞게 이용하세요.
+공식 모델은 Ultralytics AGPL-3.0 또는 Enterprise 조건이 적용됩니다. 다운로드 확인창의 라이선스 링크를 검토하고 사용 범위에 맞게 이용하세요. 다운로드 모델의 `batch`·`height`·`width` 동적 축은 QNN 세션을 만들 때 앱 선택값으로 고정합니다. 직접 만든 정적 QDQ W8A16 모델도 FP32 입출력과 일반 YOLO 출력 형식을 유지하면 320·416·640에서 선택할 수 있습니다. 양자화에는 실제 주·야간 도로 영상으로 만든 대표성 있는 calibration 데이터가 필요하며, 정확도 비교 없이 임의 데이터로 만든 모델을 배포하지 마세요.
 
 ## 빌드와 설치
 
@@ -33,6 +33,14 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat :app:assembleDebug :app:lintDebug
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 ```
+
+기본 빌드는 [Maven Central의 ONNX Runtime QNN](https://central.sonatype.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn/1.24.3)과 전이 의존성인 Qualcomm QNN Runtime을 APK에 포함합니다. Qualcomm 이외 기기에서도 QNN 세션 실패를 처리하고 NNAPI·CPU로 실행할 수 있습니다. QNN 네이티브 라이브러리를 APK 안에서는 압축하고 설치 시 꺼내므로 현재 debug APK는 약 79MB지만 설치 공간은 200MB 이상 필요할 수 있습니다. 백엔드와 모델 요구사항은 [ONNX Runtime QNN 안내](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)를 따릅니다. APK 크기를 줄인 NNAPI·CPU 전용 시험 빌드는 다음처럼 만듭니다.
+
+```powershell
+.\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false
+```
+
+이 경량 빌드에서는 앱 상단에 `QNN/HTP 런타임 미포함`이 표시되며 QNN을 시도하지 않습니다. 두 빌드는 같은 애플리케이션 ID이므로 하나를 설치하면 기존 앱을 교체합니다.
 
 Android 13 이상에서는 알림 권한을 요청합니다. Android 12 이상은 백그라운드 앱의 임의 포그라운드 서비스 시작을 제한하므로 재부팅 후에는 앱을 한 번 직접 열어야 합니다. 실행 중에는 지속 알림에서 상태와 **중지** 동작을 제공합니다.
 
@@ -58,7 +66,7 @@ Android 13 이상에서는 알림 권한을 요청합니다. Android 12 이상�
 
 ## 성능 측정
 
-앱의 **YOLO 입력 크기**는 기본 320입니다. 먼저 320·5FPS로 15분 이상 실행한 뒤 필요할 때만 416 또는 640으로 올리세요. 상태 화면은 최근 120개 처리 표본의 전화 처리 평균과 p95, JPEG 디코딩·전처리·ORT 런타임·후처리 평균, 배터리 온도와 Android 열 상태를 구분해 표시합니다. C3X 상태에는 선택 입력 크기와 `총 지연/AI 처리시간`이 표시됩니다. `eNPU`는 NNAPI 가속 경로 요청에 성공했다는 뜻이며 모든 연산이 물리 NPU에서 실행됐다는 증명은 아닙니다.
+앱의 **YOLO 입력 크기**는 기본 320입니다. 먼저 320·5FPS로 15분 이상 실행한 뒤 필요할 때만 416 또는 640으로 올리세요. 상태 화면은 최근 120개 처리 표본의 전화 처리 평균과 p95, JPEG 디코딩·전처리·ORT 런타임·후처리 평균, 배터리 온도와 Android 열 상태를 구분해 표시합니다. C3X 상태에는 선택 입력 크기와 `총 지연/AI 처리시간`이 표시됩니다. `Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)`가 나오면 CPU 폴백을 금지한 HTP 세션에서 1회 추론까지 성공한 상태입니다. `NNAPI 가속 요청`의 `eNPU`는 NPU·DSP·GPU 가속 경로 요청에 성공했다는 뜻이며 모든 연산이 물리 NPU에서 실행됐다는 증명은 아닙니다. `QNN 폴백` 문구가 보이면 뒤의 원인을 기록하고 선택된 NNAPI 또는 CPU 성능으로 판단하세요.
 
 - `ORT`만 큰 경우: 모델·가속 백엔드 병목입니다. 320을 유지하고 CPU 폴백 여부를 확인합니다.
 - `총 지연 - 전화 처리`가 큰 경우: C3X JPEG 생성, Wi-Fi 또는 반환 경로 병목입니다.

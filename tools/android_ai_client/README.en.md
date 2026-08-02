@@ -5,12 +5,12 @@ This experimental app receives 640×360 JPEG road frames from `phoneaid` on a C3
 ## Supported environment and model
 
 - A 64-bit ARM (`arm64-v8a`) phone with Android 10 (API 29) or newer
-- ONNX Runtime Android with NNAPI first and automatic CPU fallback
+- Full-graph Qualcomm QNN/HTP first, then automatic NNAPI and CPU fallbacks
 - Float32 NCHW input shaped `[1, 3, H, W]`; dynamic H/W selects 320, 416, or 640 and defaults to 320
 - Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. Supported graph partitions may run on the phone's NPU, DSP, or GPU while unsupported work may still run through ONNX Runtime CPU kernels. If the accelerated session cannot be created, the app recreates the whole session on CPU. A direct Qualcomm QNN backend is not bundled yet.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.6.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
 
 No YOLO model is bundled in the APK. **The recommended first-test model is dynamic-input YOLO11n Detection, FP32 ONNX, with no embedded NMS.** Use 320 for performance-first testing, 416 for balance, and 640 only to compare small-object quality. A 320 input has one quarter of the pixels of 640, so establish sustained performance and heat at 320 first. A static model always uses its own fixed input regardless of the app selection. YOLO11s/m/l/x, YOLOv8, or a compatible custom model may also work but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
 
@@ -22,7 +22,7 @@ Use **다른 ONNX 파일 선택** when offline or when testing another compatibl
 yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True nms=False dynamic=False batch=1
 ```
 
-The official model is subject to Ultralytics AGPL-3.0 or Enterprise terms. Review the license link in the confirmation dialog and use the model within the appropriate terms.
+The official model is subject to Ultralytics AGPL-3.0 or Enterprise terms. Review the license link in the confirmation dialog and use the model within the appropriate terms. The app binds the downloaded model's dynamic `batch`, `height`, and `width` axes to the selected size when it creates a QNN session. A custom static QDQ W8A16 model can also be selected at 320, 416, or 640 when it preserves float32 I/O and the supported plain YOLO output. Quantization requires representative day and night road calibration data; do not distribute a model calibrated with arbitrary data without an accuracy comparison.
 
 ## Build and install
 
@@ -33,6 +33,14 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat :app:assembleDebug :app:lintDebug
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 ```
+
+The default build pulls [ONNX Runtime QNN from Maven Central](https://central.sonatype.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn/1.24.3) and its transitive Qualcomm QNN Runtime dependency. It still handles QNN session failure and runs through NNAPI or CPU on non-Qualcomm devices. Native QNN libraries are compressed in the APK and extracted at install time, so the current debug APK is about 79 MB but can require more than 200 MB of installed storage. Backend and model requirements follow the [ONNX Runtime QNN guide](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html). Build a smaller NNAPI/CPU-only test APK with:
+
+```powershell
+.\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false
+```
+
+That lightweight build shows `QNN/HTP runtime not included` at the top of the app and never attempts QNN. Both variants use the same application ID, so installing either replaces the previous app.
 
 The app requests notification permission on Android 13 or newer. Android 12 and newer restrict arbitrary foreground-service launches from the background, so open the app once after a reboot. While active, a persistent notification provides status and a **중지** action.
 
@@ -58,7 +66,7 @@ For a manual fallback, enter the current C3/C3X/C4 address under **기기 IP** a
 
 ## Performance measurement
 
-The app's **YOLO input size** defaults to 320. Run 320 at 5 FPS for at least 15 minutes before raising it to 416 or 640. The status view separates the rolling 120-sample average and p95 phone time, JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. `eNPU` means that NNAPI acceleration was requested successfully; it does not prove that every operation ran on a physical NPU.
+The app's **YOLO input size** defaults to 320. Run 320 at 5 FPS for at least 15 minutes before raising it to 416 or 640. The status view separates the rolling 120-sample average and p95 phone time, JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. `Qualcomm QNN/HTP NPU (full graph, warmed)` confirms one successful inference on an HTP session with CPU fallback disabled. An `eNPU` paired with `NNAPI acceleration requested` only confirms that the NPU/DSP/GPU acceleration path was requested; it does not prove every operation ran on a physical NPU. If the status contains `QNN fallback`, record the following reason and evaluate the selected NNAPI or CPU path instead.
 
 - A large `ORT` value indicates a model or acceleration-backend bottleneck; stay at 320 and check for CPU fallback.
 - A large `total latency - phone time` indicates C3X JPEG generation, Wi-Fi, or return-path delay.

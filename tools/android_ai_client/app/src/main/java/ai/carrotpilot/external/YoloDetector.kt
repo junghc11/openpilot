@@ -193,6 +193,14 @@ class YoloDetector(
   }
 
   private fun createPreferredSession(modelFile: File): SessionSetup {
+    val qnnAttempt = if (BuildConfig.QNN_EP_INCLUDED) tryCreateQnnSession(modelFile) else null
+    qnnAttempt?.setup?.let { return it }
+    val qnnFallback = when {
+      !BuildConfig.QNN_EP_INCLUDED -> "QNN EP 미포함 빌드"
+      qnnAttempt?.error != null -> "QNN 폴백: ${shortError(qnnAttempt.error)}"
+      else -> ""
+    }
+
     val nnapiOptions = createBaseOptions()
     try {
       nnapiOptions.addNnapi(EnumSet.of(
@@ -201,9 +209,11 @@ class YoloDetector(
       ))
       return SessionSetup(
         options = nnapiOptions,
-        session = environment.createSession(modelFile.absolutePath, nnapiOptions),
+        session = createAndWarmSession(modelFile, nnapiOptions),
         backend = "onnxruntime-nnapi",
-        backendLabel = "NNAPI 가속 요청(NPU/DSP/GPU · 혼합 실행 가능)",
+        backendLabel = listOf("NNAPI 가속 요청(NPU/DSP/GPU · 혼합 실행 가능)", qnnFallback)
+          .filter(String::isNotBlank)
+          .joinToString(" · "),
       )
     } catch (nnapiError: Exception) {
       nnapiOptions.close()
@@ -211,21 +221,87 @@ class YoloDetector(
       try {
         return SessionSetup(
           options = cpuOptions,
-          session = environment.createSession(modelFile.absolutePath, cpuOptions),
+          session = createAndWarmSession(modelFile, cpuOptions),
           backend = "onnxruntime-cpu-fallback",
-          backendLabel = "ONNX Runtime CPU(NNAPI 사용 불가)",
+          backendLabel = listOf("ONNX Runtime CPU(NNAPI 사용 불가)", qnnFallback)
+            .filter(String::isNotBlank)
+            .joinToString(" · "),
         )
       } catch (cpuError: Exception) {
         cpuOptions.close()
         cpuError.addSuppressed(nnapiError)
+        qnnAttempt?.error?.let(cpuError::addSuppressed)
         throw cpuError
       }
+    }
+  }
+
+  private fun tryCreateQnnSession(modelFile: File): QnnAttempt {
+    val qnnOptions = createBaseOptions()
+    return try {
+      // A QNN session is accepted only when every operator can stay on HTP. This makes the
+      // eNPU badge an actual full-graph QNN result rather than an unnoticed CPU partition.
+      qnnOptions.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+      // Ultralytics names its dynamic axes batch/height/width. QNN requires concrete shapes,
+      // so bind the downloaded dynamic model to the input size selected in the app.
+      qnnOptions.setSymbolicDimensionValue("batch", 1L)
+      qnnOptions.setSymbolicDimensionValue("height", dynamicInputSize.toLong())
+      qnnOptions.setSymbolicDimensionValue("width", dynamicInputSize.toLong())
+      qnnOptions.addQnn(mapOf(
+        "backend_path" to "libQnnHtp.so",
+        "htp_performance_mode" to "sustained_high_performance",
+        "htp_graph_finalization_optimization_mode" to "3",
+        "enable_htp_fp16_precision" to "1",
+        "offload_graph_io_quantization" to "0",
+      ))
+      QnnAttempt(
+        setup = SessionSetup(
+          options = qnnOptions,
+          session = createAndWarmSession(modelFile, qnnOptions),
+          backend = "onnxruntime-qnn",
+          backendLabel = "Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)",
+        ),
+      )
+    } catch (error: Exception) {
+      qnnOptions.close()
+      QnnAttempt(error = error)
+    } catch (error: LinkageError) {
+      qnnOptions.close()
+      QnnAttempt(error = error)
+    }
+  }
+
+  private fun createAndWarmSession(modelFile: File, sessionOptions: OrtSession.SessionOptions): OrtSession {
+    val candidate = environment.createSession(modelFile.absolutePath, sessionOptions)
+    try {
+      val candidateInputName = candidate.inputNames.first()
+      val candidateShape = (candidate.inputInfo[candidateInputName]?.info as? TensorInfo)?.shape
+        ?: error("YOLO 입력 텐서 정보를 읽을 수 없습니다.")
+      val warmHeight = candidateShape.getOrNull(2)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
+      val warmWidth = candidateShape.getOrNull(3)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
+      val warmBuffer = ByteBuffer.allocateDirect(warmWidth * warmHeight * 3 * Float.SIZE_BYTES)
+        .order(ByteOrder.nativeOrder())
+        .asFloatBuffer()
+      OnnxTensor.createTensor(
+        environment,
+        warmBuffer,
+        longArrayOf(1, 3, warmHeight.toLong(), warmWidth.toLong()),
+      ).use { input ->
+        candidate.run(mapOf(candidateInputName to input)).use { }
+      }
+      return candidate
+    } catch (error: Throwable) {
+      candidate.close()
+      throw error
     }
   }
 
   private fun createBaseOptions() = OrtSession.SessionOptions().apply {
     setIntraOpNumThreads(max(1, Runtime.getRuntime().availableProcessors() / 2))
   }
+
+  private fun shortError(error: Throwable): String =
+    (error.message ?: error.javaClass.simpleName).lineSequence().first().take(120)
 
   private data class PreparedInput(
     val tensor: FloatBuffer,
@@ -241,6 +317,11 @@ class YoloDetector(
     val session: OrtSession,
     val backend: String,
     val backendLabel: String,
+  )
+
+  private data class QnnAttempt(
+    val setup: SessionSetup? = null,
+    val error: Throwable? = null,
   )
 
   companion object {
@@ -260,10 +341,11 @@ class YoloDetector(
             input.shape.size == 4 &&
               input.shape[0] in longArrayOf(-1, 1) &&
               input.shape[1] == 3L &&
-              input.shape[2] in longArrayOf(-1, 640) &&
-              input.shape[3] in longArrayOf(-1, 640)
+              input.shape[2] in longArrayOf(-1, 320, 416, 640) &&
+              input.shape[3] in longArrayOf(-1, 320, 416, 640) &&
+              input.shape[2] == input.shape[3]
           ) {
-            "권장 모델은 [1,3,640,640] 실행을 허용해야 합니다: ${input.shape.contentToString()}"
+            "권장 모델은 동적 또는 320/416/640 정사각 NCHW 입력이어야 합니다: ${input.shape.contentToString()}"
           }
 
           val output = session.outputInfo.values.firstOrNull()?.info as? TensorInfo

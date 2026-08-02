@@ -55,6 +55,34 @@ def test_android_client_uses_dynamic_low_resolution_and_stage_metrics() -> None:
   assert "private val pixels = IntArray" in detector
 
 
+def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
+  gradle = (ANDROID_ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+  detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
+
+  assert 'versionName = "0.6.0"' in gradle
+  assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
+  assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
+  assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
+  assert "jniLibs.useLegacyPackaging = true" in gradle
+  assert "BuildConfig.QNN_EP_INCLUDED" in activity
+  assert "Qualcomm QNN/HTP 전체 그래프 → NNAPI → CPU" in activity
+
+  qnn_setup = detector.split("private fun tryCreateQnnSession", 1)[1].split("private fun createBaseOptions", 1)[0]
+  assert 'addConfigEntry("session.disable_cpu_ep_fallback", "1")' in qnn_setup
+  assert 'setSymbolicDimensionValue("height", dynamicInputSize.toLong())' in qnn_setup
+  assert 'setSymbolicDimensionValue("width", dynamicInputSize.toLong())' in qnn_setup
+  assert '"backend_path" to "libQnnHtp.so"' in qnn_setup
+  assert '"htp_performance_mode" to "sustained_high_performance"' in qnn_setup
+  assert '"htp_graph_finalization_optimization_mode" to "3"' in qnn_setup
+  assert '"offload_graph_io_quantization" to "0"' in qnn_setup
+  assert 'backend = "onnxruntime-qnn"' in qnn_setup
+  assert "createAndWarmSession(modelFile, qnnOptions)" in qnn_setup
+  assert "candidate.run(mapOf(candidateInputName to input))" in detector
+  assert detector.index("tryCreateQnnSession(modelFile)") < detector.index("nnapiOptions.addNnapi")
+  assert 'input.shape[2] in longArrayOf(-1, 320, 416, 640)' in detector
+
+
 def test_android_recommended_model_download_is_pinned_and_validated() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   downloader = (JAVA_ROOT / "RecommendedModel.kt").read_text(encoding="utf-8")
@@ -75,7 +103,7 @@ def test_android_recommended_model_download_is_pinned_and_validated() -> None:
   assert "Uri.fromFile(file)" in activity
   assert "if (activityStarted && autoConnect.isChecked) startClient(autoDiscover = true)" in activity
   assert "input.shape[0] in longArrayOf(-1, 1)" in detector
-  assert "input.shape[2] in longArrayOf(-1, 640)" in detector
+  assert "input.shape[2] in longArrayOf(-1, 320, 416, 640)" in detector
   assert "output.shape[0] in longArrayOf(-1, 1)" in detector
   assert "output.shape[2] == -1L || output.shape[2] > output.shape[1]" in detector
   assert "output.shape[1] == -1L || output.shape[1] > output.shape[2]" in detector
@@ -128,6 +156,9 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "기본 320은 성능 우선",
     "전화 처리 평균과 p95",
     "NCHW 강제 옵션",
+    "QNN/HTP 전체 그래프",
+    "session.disable_cpu_ep_fallback",
+    "carrotQnnEnabled=false",
     "공식 `ultralytics/assets` v8.4.0 Release",
     "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
     "AGPL-3.0 또는 Enterprise",
@@ -145,6 +176,9 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "Use 320 for performance-first testing",
     "average and p95 phone time",
     "does not force the potentially slower NCHW option",
+    "Full-graph Qualcomm QNN/HTP",
+    "session.disable_cpu_ep_fallback",
+    "carrotQnnEnabled=false",
     "official `ultralytics/assets` v8.4.0 Release",
     "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
     "AGPL-3.0 or Enterprise",
