@@ -282,6 +282,8 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 
 `ExternalAIPhoneIP`가 비어 있으면 어떤 IPv4 발신자도 받을 수 있고, IP를 지정하면 그 주소의 결과만 허용합니다. `ExternalAIResultPort`는 결과 UDP 포트, `ExternalAIMaxLatencyMs`는 C3X가 프레임에 붙인 단조시계 기준 최대 왕복 지연(기본 300ms)입니다. `ExternalAIShowOverlay`를 켜면 지원 차종을 외부 Cluster HUD의 차종별 3D 형상으로, C3X 본체 카메라 화면에는 차종별 2D 실루엣과 이름·신뢰도로 표시합니다. 신호등과 정지표지는 본체 화면의 2D 기호로만 표시합니다. 바운딩박스 크기로 계산한 3D 거리는 카메라 보정 전의 근사값이며, 가까운 전방 레이더 객체와 일치하면 레이더 위치에 차종 정보만 합칩니다. 본체 화면 좌표도 전송 영상의 크롭·보정 작업 전까지 디버그용 근사 위치입니다. `ExternalAIFramePort`, `ExternalAIFrameFPS`, `ExternalAIJpegQuality`는 다음 영상 송신 단계용으로 예약되어 있으며 아직 영상을 전송하지 않습니다. `ExternalAIDebug`는 후속 단계 전까지 비활성입니다. 실제 차량에서 활성화하기 전에 정적·녹화 영상과 더미 송신기로 먼저 확인하세요.
 
+Android와 모니터 없이 결과 수신부터 두 화면용 객체 변환까지 시험하려면 C3X/PC에서 `python tools/external_ai/mock_phone_ai.py --host 127.0.0.1 --fps 5`를 실행합니다. `ExternalAIEnabled=1`과 `ExternalAIShowOverlay=1`이 필요하며, `Ctrl-C`로 종료합니다. 한 번만 보내려면 `--count 1`을 추가합니다. 이 도구는 같은 장치의 단조시계를 사용하므로 원격 PC보다는 C3X 자체에서 실행하세요.
+
 <a id="system"></a>
 ## 시스템
 

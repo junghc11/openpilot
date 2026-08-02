@@ -271,6 +271,8 @@ The Replay event timeline also identifies Carrot Navi connection and route-sessi
 
 Leave `ExternalAIPhoneIP` empty to accept any IPv4 sender, or set it to accept results only from that address. `ExternalAIResultPort` selects the result UDP port, and `ExternalAIMaxLatencyMs` sets the maximum round-trip age using the monotonic timestamp originally attached by the C3X (default 300 ms). With `ExternalAIShowOverlay` enabled, supported classes appear as class-specific 3D shapes on the external Cluster HUD and as class-specific 2D silhouettes with a name and confidence on the C3X camera view. Traffic lights and stop signs currently use 2D symbols on the device only. Distance derived from bounding-box height is approximate until camera calibration is completed; when a detection matches a nearby front-radar object, only its class information is added to the radar position. On-device coordinates are also debug-grade approximations until the transmitted frame crop and calibration are finalized. `ExternalAIFramePort`, `ExternalAIFrameFPS`, and `ExternalAIJpegQuality` are reserved for the next video-sender stage and do not transmit video yet. `ExternalAIDebug` remains inactive until a later stage. Validate with static or recorded imagery and a mock sender before enabling it in a vehicle.
 
+To test result reception and both display projections without Android or the monitor, run `python tools/external_ai/mock_phone_ai.py --host 127.0.0.1 --fps 5` on the C3X/PC. `ExternalAIEnabled=1` and `ExternalAIShowOverlay=1` are required; stop it with `Ctrl-C`, or add `--count 1` for one packet. The standalone mock uses the local monotonic clock, so run it on the C3X rather than a remote PC.
+
 <a id="system"></a>
 ## System
 
