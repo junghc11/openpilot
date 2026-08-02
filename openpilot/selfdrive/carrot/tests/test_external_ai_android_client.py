@@ -12,8 +12,10 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   manifest = (ANDROID_ROOT / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
 
   assert "앱 실행 시 같은 망 자동 검색 및 시작" in activity
-  assert "YOLO ONNX 모델 선택 (권장: YOLO11n 640)" in activity
-  assert "yolo11n.onnx (640, FP32, NMS 미포함)" in activity
+  assert "권장 모델 다운로드 (YOLO11n 640 · 10.4 MB)" in activity
+  assert "다른 ONNX 파일 선택" in activity
+  assert "권장 모델 삭제" in activity
+  assert "동의 후 다운로드" in activity
   assert "autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive" in activity
   assert "startClient(autoDiscover = true)" in activity
   assert "입력 IP로 시작" in activity
@@ -21,6 +23,35 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   assert "EXTRA_AUTO_DISCOVER" in activity
   assert "DeviceDiscovery.findHost(config.framePort, config.host)" in service
   assert "RECEIVE_BOOT_COMPLETED" not in manifest
+
+
+def test_android_recommended_model_download_is_pinned_and_validated() -> None:
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+  downloader = (JAVA_ROOT / "RecommendedModel.kt").read_text(encoding="utf-8")
+  detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+
+  assert 'DOWNLOAD_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx"' in downloader
+  assert "EXPECTED_SIZE = 10_930_182L" in downloader
+  assert 'EXPECTED_SHA256 = "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b"' in downloader
+  assert 'require(sourceUrl.protocol == "https")' in downloader
+  assert "connection.responseCode == HttpURLConnection.HTTP_OK" in downloader
+  assert "received <= EXPECTED_SIZE" in downloader
+  assert "actualSha256 == EXPECTED_SHA256" in downloader
+  assert "YoloDetector.validateModelFile(partial)" in downloader
+  assert "StandardCopyOption.ATOMIC_MOVE" in downloader
+  assert "Files.deleteIfExists(partial.toPath())" in downloader
+  assert "AlertDialog.Builder(this)" in activity
+  assert "Uri.fromFile(file)" in activity
+  assert "if (activityStarted && autoConnect.isChecked) startClient(autoDiscover = true)" in activity
+  assert "input.shape[0] in longArrayOf(-1, 1)" in detector
+  assert "input.shape[2] in longArrayOf(-1, 640)" in detector
+  assert "output.shape[0] in longArrayOf(-1, 1)" in detector
+  assert "output.shape[2] == -1L || output.shape[2] > output.shape[1]" in detector
+  assert "output.shape[1] == -1L || output.shape[1] > output.shape[2]" in detector
+  assert "channelsFirst || channelsLast" in detector
+  assert "uri.scheme == ContentResolver.SCHEME_FILE" in service
+  assert "FileInputStream(File(requireNotNull(uri.path)" in service
 
 
 def test_android_discovery_is_bounded_to_private_subnets_and_carrot_port() -> None:
@@ -62,8 +93,11 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   assert "README.ko.md" in index
   assert "README.en.md" in index
   for text in (
-    "Android 앱의 `YOLO ONNX 모델 선택 (권장: YOLO11n 640)` 버튼",
+    "앱의 **권장 모델 다운로드**",
     "첫 시험 권장 모델은 `YOLO11n Detection`",
+    "공식 `ultralytics/assets` v8.4.0 Release",
+    "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
+    "AGPL-3.0 또는 Enterprise",
     "nms=False dynamic=False batch=1",
     "같은 사설 IPv4 `/24`",
     "Carrot 프레임 서명 `CAI1`",
@@ -73,8 +107,11 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   ):
     assert text in readme_ko
   for text in (
-    "Select the model on the **Android app**",
+    "Press **권장 모델 다운로드**",
     "recommended first-test model is YOLO11n Detection",
+    "official `ultralytics/assets` v8.4.0 Release",
+    "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
+    "AGPL-3.0 or Enterprise",
     "nms=False dynamic=False batch=1",
     "local private IPv4 `/24`",
     "Carrot frame signature `CAI1`",

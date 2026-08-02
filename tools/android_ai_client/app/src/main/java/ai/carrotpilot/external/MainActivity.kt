@@ -3,6 +3,7 @@ package ai.carrotpilot.external
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -20,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 
 @SuppressLint("SetTextI18n")
 class MainActivity : Activity() {
@@ -30,10 +32,14 @@ class MainActivity : Activity() {
   private lateinit var threshold: EditText
   private lateinit var inferenceFps: EditText
   private lateinit var autoConnect: CheckBox
+  private lateinit var downloadModelButton: Button
+  private lateinit var deleteModelButton: Button
   private lateinit var modelLabel: TextView
   private lateinit var status: TextView
   private var modelUri: Uri? = null
   private var activityStarted = false
+  @Volatile private var downloadingModel = false
+  private var downloadThread: Thread? = null
 
   private val statusReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -70,7 +76,7 @@ class MainActivity : Activity() {
     if (autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive) {
       startClient(autoDiscover = true)
     } else if (autoConnect.isChecked && modelUri == null) {
-      status.text = "YOLO ONNX 모델을 선택하면 자동 검색을 시작합니다."
+      status.text = "권장 모델을 다운로드하거나 ONNX 파일을 선택하세요."
     }
   }
 
@@ -78,6 +84,11 @@ class MainActivity : Activity() {
     activityStarted = false
     unregisterReceiver(statusReceiver)
     super.onStop()
+  }
+
+  override fun onDestroy() {
+    downloadThread?.interrupt()
+    super.onDestroy()
   }
 
   @Deprecated("Uses the platform document picker for broad Android compatibility")
@@ -146,10 +157,23 @@ class MainActivity : Activity() {
       setPadding(0, (12 * density).toInt(), 0, (8 * density).toInt())
     }
     root.addView(modelLabel)
-    root.addView(Button(this).apply {
-      text = "YOLO ONNX 모델 선택 (권장: YOLO11n 640)"
+    downloadModelButton = Button(this).apply {
+      setOnClickListener { confirmRecommendedModelDownload() }
+    }
+    root.addView(downloadModelButton, matchWidth())
+
+    val modelControls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+    modelControls.addView(Button(this).apply {
+      text = "다른 ONNX 파일 선택"
       setOnClickListener { selectModel() }
-    }, matchWidth())
+    }, weighted())
+    deleteModelButton = Button(this).apply {
+      text = "권장 모델 삭제"
+      setOnClickListener { deleteRecommendedModel() }
+    }
+    modelControls.addView(deleteModelButton, weighted())
+    root.addView(modelControls, matchWidth())
+
     root.addView(Button(this).apply {
       text = "같은 망 자동 검색 후 시작"
       setOnClickListener { startClient(autoDiscover = true) }
@@ -211,6 +235,77 @@ class MainActivity : Activity() {
     startActivityForResult(intent, REQUEST_MODEL)
   }
 
+  private fun confirmRecommendedModelDownload() {
+    if (downloadingModel) return
+    AlertDialog.Builder(this)
+      .setTitle("권장 모델 다운로드")
+      .setMessage(
+        "공식 Ultralytics YOLO11n ONNX ${RecommendedModel.VERSION} 모델을 다운로드합니다.\n\n" +
+          "크기: 10.4 MB\n입력: 1×3×640×640 FP32\n라이선스: AGPL-3.0 또는 Enterprise\n\n" +
+          "라이선스 조건을 확인하고 개인·오픈소스 실험 범위에 맞게 사용하세요.\n${RecommendedModel.LICENSE_URL}",
+      )
+      .setNegativeButton("취소", null)
+      .setPositiveButton("동의 후 다운로드") { _, _ -> downloadRecommendedModel() }
+      .show()
+  }
+
+  private fun downloadRecommendedModel() {
+    if (downloadingModel) return
+    downloadingModel = true
+    status.text = "권장 YOLO11n 모델 다운로드 준비 중"
+    updateModelLabel()
+    downloadThread = Thread({
+      try {
+        val file = RecommendedModel.download(this) { received, total ->
+          val percent = (received * 100L / total).toInt().coerceIn(0, 100)
+          val receivedMegabytes = received / 1_048_576.0
+          runOnUiThread {
+            if (!isDestroyed) {
+              downloadModelButton.text = "권장 모델 다운로드 중 $percent%"
+              status.text = "YOLO11n 다운로드 $percent% · ${"%.1f".format(receivedMegabytes)} MB"
+            }
+          }
+        }
+        runOnUiThread {
+          if (isDestroyed) return@runOnUiThread
+          modelUri = Uri.fromFile(file)
+          preferences.edit().putString(KEY_MODEL_URI, modelUri.toString()).apply()
+          downloadingModel = false
+          updateModelLabel()
+          status.text = "권장 모델 설치 및 SHA-256·ONNX 검증 완료"
+          Toast.makeText(this, "YOLO11n 권장 모델 설치 완료", Toast.LENGTH_LONG).show()
+          if (activityStarted && autoConnect.isChecked) startClient(autoDiscover = true)
+        }
+      } catch (error: Exception) {
+        runOnUiThread {
+          if (isDestroyed) return@runOnUiThread
+          downloadingModel = false
+          updateModelLabel()
+          status.text = "권장 모델 다운로드 실패\n${error.message ?: error.javaClass.simpleName}"
+          Toast.makeText(this, "모델 다운로드 실패: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+      } finally {
+        downloadThread = null
+      }
+    }, "recommended-model-download").apply { start() }
+  }
+
+  private fun deleteRecommendedModel() {
+    downloadThread?.interrupt()
+    val selectedRecommended = isRecommendedModelUri(modelUri)
+    if (selectedRecommended && ExternalAIService.serviceActive) {
+      startService(Intent(this, ExternalAIService::class.java).setAction(ExternalAIService.ACTION_STOP))
+    }
+    RecommendedModel.delete(this)
+    if (selectedRecommended) {
+      modelUri = null
+      preferences.edit().remove(KEY_MODEL_URI).apply()
+    }
+    downloadingModel = false
+    updateModelLabel()
+    status.text = "권장 모델 삭제 완료"
+  }
+
   private fun startClient(autoDiscover: Boolean) {
     val uri = modelUri
     val config = try {
@@ -249,7 +344,13 @@ class MainActivity : Activity() {
     threshold.setText(preferences.getFloat(KEY_THRESHOLD, 0.35f).toString())
     inferenceFps.setText(preferences.getInt(KEY_TARGET_FPS, 5).toString())
     autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
-    modelUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
+    val storedUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
+    modelUri = when {
+      storedUri?.scheme == "file" && storedUri.path?.let(::File)?.isFile == true -> storedUri
+      storedUri != null && storedUri.scheme != "file" -> storedUri
+      RecommendedModel.isInstalled(this) -> Uri.fromFile(RecommendedModel.installedFile(this))
+      else -> null
+    }
     updateModelLabel()
   }
 
@@ -265,9 +366,25 @@ class MainActivity : Activity() {
   }
 
   private fun updateModelLabel() {
-    modelLabel.text = modelUri?.let { "선택 모델: ${it.lastPathSegment ?: it}" }
-      ?: "선택된 모델 없음 · 첫 시험 권장: yolo11n.onnx (640, FP32, NMS 미포함)"
+    val installed = RecommendedModel.isInstalled(this)
+    modelLabel.text = when {
+      isRecommendedModelUri(modelUri) && installed ->
+        "권장 모델 준비됨: ${RecommendedModel.DISPLAY_NAME}\nSHA-256 검증 버전: ${RecommendedModel.VERSION}"
+      modelUri != null -> "사용자 선택 모델: ${modelUri?.lastPathSegment ?: modelUri}"
+      installed -> "권장 모델 설치됨 · 사용하려면 권장 모델 버튼을 누르세요."
+      else -> "선택된 모델 없음 · 권장: YOLO11n 640 FP32"
+    }
+    downloadModelButton.text = when {
+      downloadingModel -> "권장 모델 다운로드 중"
+      installed -> "권장 모델 다시 다운로드"
+      else -> "권장 모델 다운로드 (YOLO11n 640 · 10.4 MB)"
+    }
+    downloadModelButton.isEnabled = !downloadingModel
+    deleteModelButton.isEnabled = installed && !downloadingModel
   }
+
+  private fun isRecommendedModelUri(uri: Uri?): Boolean =
+    uri?.scheme == "file" && uri.path == RecommendedModel.installedFile(this).absolutePath
 
   private fun matchWidth() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
   private fun weighted() = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)

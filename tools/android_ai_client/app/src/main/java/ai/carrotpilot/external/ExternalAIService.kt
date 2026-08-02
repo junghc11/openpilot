@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -18,6 +19,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import java.io.DataInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -235,7 +237,12 @@ class ExternalAIService : Service() {
 
   private fun copyModelToCache(uri: Uri): File {
     val modelFile = File(cacheDir, "selected-yolo.onnx")
-    contentResolver.openInputStream(uri).use { input ->
+    val source = if (uri.scheme == ContentResolver.SCHEME_FILE) {
+      FileInputStream(File(requireNotNull(uri.path) { "내부 모델 경로가 없습니다." }))
+    } else {
+      contentResolver.openInputStream(uri)
+    }
+    source.use { input ->
       requireNotNull(input) { "선택한 모델을 읽을 수 없습니다." }
       FileOutputStream(modelFile).use { output -> input.copyTo(output) }
     }

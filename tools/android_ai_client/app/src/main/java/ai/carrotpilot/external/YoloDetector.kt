@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
@@ -208,6 +209,40 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
   )
 
   companion object {
+    fun validateModelFile(modelFile: File) {
+      require(modelFile.isFile && modelFile.length() > 0L) { "ONNX 모델 파일이 비어 있습니다." }
+      val environment = OrtEnvironment.getEnvironment()
+      OrtSession.SessionOptions().use { options ->
+        environment.createSession(modelFile.absolutePath, options).use { session ->
+          val inputName = session.inputNames.firstOrNull() ?: error("ONNX 입력이 없습니다.")
+          val input = session.inputInfo[inputName]?.info as? TensorInfo ?: error("ONNX 입력이 텐서가 아닙니다.")
+          require(input.type == OnnxJavaType.FLOAT) { "권장 모델 입력은 FP32여야 합니다: ${input.type}" }
+          require(
+            input.shape.size == 4 &&
+              input.shape[0] in longArrayOf(-1, 1) &&
+              input.shape[1] == 3L &&
+              input.shape[2] in longArrayOf(-1, 640) &&
+              input.shape[3] in longArrayOf(-1, 640)
+          ) {
+            "권장 모델은 [1,3,640,640] 실행을 허용해야 합니다: ${input.shape.contentToString()}"
+          }
+
+          val output = session.outputInfo.values.firstOrNull()?.info as? TensorInfo
+            ?: error("ONNX 출력이 텐서가 아닙니다.")
+          require(output.type == OnnxJavaType.FLOAT && output.shape.size == 3 && output.shape[0] in longArrayOf(-1, 1)) {
+            "권장 모델 출력 형식이 올바르지 않습니다: ${output.shape.contentToString()}"
+          }
+          val channelsFirst = output.shape[1] in 84..256 &&
+            (output.shape[2] == -1L || output.shape[2] > output.shape[1])
+          val channelsLast = output.shape[2] in 84..256 &&
+            (output.shape[1] == -1L || output.shape[1] > output.shape[2])
+          require(channelsFirst || channelsLast) {
+            "권장 모델은 일반 COCO YOLO 출력을 사용해야 합니다: ${output.shape.contentToString()}"
+          }
+        }
+      }
+    }
+
     private val supportedClasses = mapOf(
       0 to "person",
       1 to "bicycle",
