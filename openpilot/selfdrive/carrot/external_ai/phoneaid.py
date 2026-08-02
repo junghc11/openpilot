@@ -7,6 +7,13 @@ from openpilot.selfdrive.carrot.external_ai.protocol import (
   DEFAULT_CONNECTION_TIMEOUT_MS,
   DEFAULT_MAX_LATENCY_MS,
 )
+from openpilot.selfdrive.carrot.external_ai.frame_sender import (
+  DEFAULT_FRAME_FPS,
+  DEFAULT_FRAME_PORT,
+  DEFAULT_JPEG_QUALITY,
+  RoadFrameCapture,
+  VideoFrameTcpServer,
+)
 from openpilot.selfdrive.carrot.external_ai.receiver import DEFAULT_RESULT_PORT, ExternalAIUdpReceiver
 from openpilot.selfdrive.carrot.external_ai.state import build_phone_ai_payload
 
@@ -56,6 +63,12 @@ class PhoneAIDaemon:
       max_latency_ms=float(max_latency_ms),
       connection_timeout_ms=DEFAULT_CONNECTION_TIMEOUT_MS,
     )
+    allowed_phone_ip = _param_text(self.params, "ExternalAIPhoneIP")
+    frame_port = _clamped_param_int(self.params, "ExternalAIFramePort", DEFAULT_FRAME_PORT, 1, 65_535)
+    frame_fps = _clamped_param_int(self.params, "ExternalAIFrameFPS", DEFAULT_FRAME_FPS, 1, 15)
+    jpeg_quality = _clamped_param_int(self.params, "ExternalAIJpegQuality", DEFAULT_JPEG_QUALITY, 30, 95)
+    self.frame_server = VideoFrameTcpServer(port=frame_port, allowed_phone_ip=allowed_phone_ip)
+    self.frame_capture = RoadFrameCapture(self.frame_server, fps=frame_fps, jpeg_quality=jpeg_quality)
     self.pm = messaging_module.PubMaster(["phoneAIState"])
 
   def publish_once(self, *, now_monotonic_ns: int | None = None) -> dict[str, object]:
@@ -70,8 +83,10 @@ class PhoneAIDaemon:
 
   def run(self) -> None:
     self.receiver.open()
-    next_publish = 0.0
     try:
+      self.frame_server.start()
+      self.frame_capture.start()
+      next_publish = 0.0
       while True:
         self.receiver.poll(timeout_s=POLL_TIMEOUT_S)
         now = time.monotonic()
@@ -79,6 +94,8 @@ class PhoneAIDaemon:
           self.publish_once()
           next_publish = now + PUBLISH_INTERVAL_S
     finally:
+      self.frame_capture.stop()
+      self.frame_server.stop()
       self.receiver.close()
 
 

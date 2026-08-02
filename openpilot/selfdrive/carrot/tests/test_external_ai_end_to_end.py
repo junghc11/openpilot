@@ -1,11 +1,14 @@
 import importlib.util
 from pathlib import Path
 import socket
+import threading
 import time
 
 from openpilot.selfdrive.carrot.external_ai.overlay import phone_ai_overlay_objects
 from openpilot.selfdrive.carrot.external_ai.projection import project_phone_ai_state
 from openpilot.selfdrive.carrot.external_ai.receiver import ExternalAIReceiverStats, ExternalAIUdpReceiver
+from openpilot.selfdrive.carrot.external_ai.frame_protocol import VideoFrame, encode_video_frame
+from openpilot.selfdrive.carrot.external_ai.frame_sender import VideoFrameTcpServer
 from openpilot.selfdrive.carrot.external_ai.state import build_phone_ai_payload
 
 
@@ -46,3 +49,29 @@ def test_mock_packet_reaches_cereal_projection_and_device_overlay() -> None:
   assert {item.class_name for item in device_objects} == {
     "car", "truck", "bus", "motorcycle", "bicycle", "person", "traffic light", "stop sign",
   }
+
+
+def test_mock_phone_receives_c3x_frame_and_returns_matching_result() -> None:
+  mock = load_mock_module()
+  frame_server = VideoFrameTcpServer(host="127.0.0.1", port=0)
+  frame_server.start()
+  try:
+    with ExternalAIUdpReceiver(host="127.0.0.1", port=0) as receiver:
+      assert receiver.bound_port is not None
+      worker = threading.Thread(
+        target=mock.run_from_frames,
+        args=("127.0.0.1", frame_server.bound_port, receiver.bound_port, 1),
+      )
+      worker.start()
+      assert frame_server.client_connected.wait(timeout=1.0)
+      source_ns = time.monotonic_ns()
+      frame_server.slot.put(encode_video_frame(VideoFrame(77, source_ns, 640, 360, b"\xff\xd8mock\xff\xd9")))
+      result = receiver.poll(timeout_s=1.0, now_monotonic_ns=source_ns + 100_000_000)
+      worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert result is not None
+    assert result.frame_id == 77
+    assert result.source_timestamp_monotonic_ns == source_ns
+  finally:
+    frame_server.stop()

@@ -6,7 +6,10 @@ import json
 import socket
 import time
 
+from openpilot.selfdrive.carrot.external_ai.frame_protocol import receive_video_frame
 
+
+DEFAULT_FRAME_PORT = 7724
 DEFAULT_RESULT_PORT = 7725
 DEFAULT_FPS = 5.0
 MOCK_OBJECTS = (
@@ -50,7 +53,7 @@ def build_mock_result(frame_id: int, source_timestamp_monotonic_ns: int) -> byte
   return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
-def run(host: str, port: int, fps: float, count: int) -> None:
+def run_results_only(host: str, port: int, fps: float, count: int) -> None:
   interval_s = 1.0 / fps
   frame_id = 1
   next_send = time.monotonic()
@@ -76,21 +79,51 @@ def run(host: str, port: int, fps: float, count: int) -> None:
       next_send += interval_s
 
 
+def run_from_frames(host: str, frame_port: int, result_port: int, count: int) -> None:
+  received = 0
+  started = time.monotonic()
+  with socket.create_connection((host, frame_port), timeout=5.0) as frame_socket, \
+       socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as result_socket:
+    frame_socket.settimeout(5.0)
+    print(f"mock phone connected to C3X video {host}:{frame_port}")
+    while count <= 0 or received < count:
+      frame = receive_video_frame(frame_socket)
+      result_socket.sendto(
+        build_mock_result(frame.frame_id, frame.source_timestamp_monotonic_ns),
+        (host, result_port),
+      )
+      received += 1
+      if received == 1 or received % 5 == 0:
+        elapsed = max(0.001, time.monotonic() - started)
+        print(
+          f"mock phone received frame={frame.frame_id} {frame.width}x{frame.height} " +
+          f"jpeg={len(frame.jpeg)}B replied objects={len(MOCK_OBJECTS)} rate={received / elapsed:.1f}Hz",
+        )
+
+
 def main() -> None:
-  parser = argparse.ArgumentParser(description="Send visualization-only mock phone AI detections to phoneaid")
+  parser = argparse.ArgumentParser(description="Receive C3X video and return visualization-only mock phone AI detections")
   parser.add_argument("--host", default="127.0.0.1", help="C3X address. Default: 127.0.0.1")
-  parser.add_argument("--port", type=int, default=DEFAULT_RESULT_PORT, help="phoneaid UDP result port")
-  parser.add_argument("--fps", type=float, default=DEFAULT_FPS, help="result rate. Default: 5")
-  parser.add_argument("--count", type=int, default=0, help="packets to send; 0 runs until Ctrl-C")
+  parser.add_argument("--frame-port", type=int, default=DEFAULT_FRAME_PORT, help="C3X TCP video port")
+  parser.add_argument("--result-port", "--port", dest="result_port", type=int, default=DEFAULT_RESULT_PORT,
+                      help="phoneaid UDP result port")
+  parser.add_argument("--results-only", action="store_true", help="send synthetic results without receiving video")
+  parser.add_argument("--fps", type=float, default=DEFAULT_FPS, help="result rate in --results-only mode")
+  parser.add_argument("--count", type=int, default=0, help="frames/results to process; 0 runs until Ctrl-C")
   args = parser.parse_args()
-  if not 1 <= args.port <= 65_535:
-    parser.error("--port must be between 1 and 65535")
+  if not 1 <= args.frame_port <= 65_535:
+    parser.error("--frame-port must be between 1 and 65535")
+  if not 1 <= args.result_port <= 65_535:
+    parser.error("--result-port must be between 1 and 65535")
   if not 0.1 <= args.fps <= 30.0:
     parser.error("--fps must be between 0.1 and 30")
   if args.count < 0:
     parser.error("--count must be non-negative")
   try:
-    run(args.host, args.port, args.fps, args.count)
+    if args.results_only:
+      run_results_only(args.host, args.result_port, args.fps, args.count)
+    else:
+      run_from_frames(args.host, args.frame_port, args.result_port, args.count)
   except KeyboardInterrupt:
     print("mock phone AI stopped")
 
