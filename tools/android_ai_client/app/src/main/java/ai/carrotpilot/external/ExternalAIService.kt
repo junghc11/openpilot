@@ -36,6 +36,7 @@ class ExternalAIService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    serviceActive = true
     createNotificationChannel()
   }
 
@@ -53,6 +54,7 @@ class ExternalAIService : Service() {
 
   override fun onDestroy() {
     stopClient()
+    serviceActive = false
     super.onDestroy()
   }
 
@@ -60,61 +62,83 @@ class ExternalAIService : Service() {
 
   private fun startClient(config: ServiceConfig) {
     stopWorkerOnly()
+    clientConnected = false
     val token = AtomicBoolean(true)
     runToken = token
     worker = Thread({ runClient(config, token) }, "carrot-external-ai").apply { start() }
   }
 
   private fun runClient(config: ServiceConfig, token: AtomicBoolean) {
-    val modelFile = try {
-      copyModelToCache(config.modelUri)
-    } catch (error: Exception) {
-      updateStatus("모델 열기 실패\n${error.message}")
-      token.set(false)
-      if (runToken === token) {
-        runToken = null
-        releasePerformanceLocks()
-      }
-      return
-    }
     val modelName = config.modelUri.lastPathSegment ?: "yolo.onnx"
     var retryDelayMs = MIN_RETRY_DELAY_MS
+    var discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
+    var detector: YoloDetector? = null
     try {
-      YoloDetector(modelFile, config.threshold).use { detector ->
-        while (token.get()) {
-          try {
-            updateStatus("기기 연결 중: ${config.host}:${config.framePort}")
-            Socket().use { socket ->
-              frameSocket = socket
-              socket.tcpNoDelay = true
-              socket.soTimeout = 5_000
-              socket.connect(InetSocketAddress(config.host, config.framePort), 3_000)
-              acquirePerformanceLocks()
-              retryDelayMs = MIN_RETRY_DELAY_MS
-              DataInputStream(socket.getInputStream().buffered()).use { input ->
-                DatagramSocket().use { resultSocket ->
-                  processFrames(config, detector, modelName, input, resultSocket, token)
-                }
+      while (token.get()) {
+        val targetHost = if (config.autoDiscover) {
+          updateStatus("같은 사설망에서 CarrotPilot 기기 검색 중\nTCP ${config.framePort} / CAI1 확인")
+          DeviceDiscovery.findHost(config.framePort, config.host) { token.get() }
+        } else {
+          config.host
+        }
+        if (targetHost == null) {
+          if (token.get()) {
+            updateStatus("기기를 찾지 못함\n${discoveryRetryDelayMs / 1_000}초 후 같은 망 다시 검색")
+            SystemClock.sleep(discoveryRetryDelayMs)
+            discoveryRetryDelayMs = (discoveryRetryDelayMs * 2).coerceAtMost(MAX_DISCOVERY_RETRY_DELAY_MS)
+          }
+          continue
+        }
+        discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
+        if (config.autoDiscover) {
+          getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit().putString(PREFERENCE_HOST, targetHost).apply()
+        }
+
+        val activeDetector = detector ?: try {
+          updateStatus("기기 발견: $targetHost\nYOLO 모델 준비 중", targetHost)
+          YoloDetector(copyModelToCache(config.modelUri), config.threshold).also { detector = it }
+        } catch (error: Exception) {
+          updateStatus("YOLO 모델 열기 실패\n${error.message}")
+          token.set(false)
+          break
+        }
+
+        try {
+          updateStatus("기기 연결 중: $targetHost:${config.framePort}", targetHost)
+          Socket().use { socket ->
+            frameSocket = socket
+            socket.tcpNoDelay = true
+            socket.soTimeout = 5_000
+            socket.connect(InetSocketAddress(targetHost, config.framePort), 3_000)
+            clientConnected = true
+            acquirePerformanceLocks()
+            retryDelayMs = MIN_RETRY_DELAY_MS
+            DataInputStream(socket.getInputStream().buffered()).use { input ->
+              DatagramSocket().use { resultSocket ->
+                processFrames(config, targetHost, activeDetector, modelName, input, resultSocket, token)
               }
             }
-          } catch (error: Exception) {
-            if (runToken === token) releasePerformanceLocks()
-            if (token.get()) {
-              updateStatus("저전력 재연결 대기 ${retryDelayMs / 1_000}초\n${error.javaClass.simpleName}: ${error.message}")
-              SystemClock.sleep(retryDelayMs)
-              retryDelayMs = (retryDelayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
-            }
-          } finally {
-            if (runToken === token) {
-              frameSocket = null
-              releasePerformanceLocks()
-            }
+          }
+        } catch (error: Exception) {
+          if (runToken === token) releasePerformanceLocks()
+          if (token.get()) {
+            updateStatus("저전력 재연결 대기 ${retryDelayMs / 1_000}초\n${error.javaClass.simpleName}: ${error.message}")
+            SystemClock.sleep(retryDelayMs)
+            retryDelayMs = (retryDelayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+          }
+        } finally {
+          clientConnected = false
+          if (runToken === token) {
+            frameSocket = null
+            releasePerformanceLocks()
           }
         }
       }
     } catch (error: Exception) {
       updateStatus("YOLO 초기화 실패\n${error.message}")
     } finally {
+      detector?.close()
+      clientConnected = false
       token.set(false)
       if (runToken === token) {
         runToken = null
@@ -125,13 +149,14 @@ class ExternalAIService : Service() {
 
   private fun processFrames(
     config: ServiceConfig,
+    targetHost: String,
     detector: YoloDetector,
     modelName: String,
     input: DataInputStream,
     resultSocket: DatagramSocket,
     token: AtomicBoolean,
   ) {
-    val resultAddress = InetAddress.getByName(config.host)
+    val resultAddress = InetAddress.getByName(targetHost)
     val targetIntervalNs = 1_000_000_000L / config.targetFps
     var lastInferenceStartNs = 0L
     var receivedCount = 0
@@ -175,6 +200,7 @@ class ExternalAIService : Service() {
         val seconds = windowNs / 1_000_000_000.0
         updateStatus(buildStatus(
           config = config,
+          targetHost = targetHost,
           receiveFps = receivedCount / seconds,
           inferenceFps = inferenceCount / seconds,
           averageInferenceMs = averageInferenceMs,
@@ -190,6 +216,7 @@ class ExternalAIService : Service() {
 
   private fun buildStatus(
     config: ServiceConfig,
+    targetHost: String,
     receiveFps: Double,
     inferenceFps: Double,
     averageInferenceMs: Double,
@@ -199,7 +226,7 @@ class ExternalAIService : Service() {
     val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val batteryTemp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
     val thermalStatus = getSystemService(PowerManager::class.java).currentThermalStatus
-    return "연결됨: ${config.host}:${config.framePort}\n" +
+    return "연결됨: $targetHost:${config.framePort}\n" +
       "수신 ${"%.1f".format(receiveFps)} FPS · 추론 ${"%.1f".format(inferenceFps)} FPS\n" +
       "평균 추론 ${"%.1f".format(averageInferenceMs)} ms · 객체 ${objectCount}개\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
@@ -221,10 +248,12 @@ class ExternalAIService : Service() {
     startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
   }
 
-  private fun updateStatus(message: String) {
+  private fun updateStatus(message: String, discoveredHost: String? = null) {
     lastStatus = message
     (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, buildNotification(message))
-    sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, message))
+    sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, message).apply {
+      discoveredHost?.let { putExtra(EXTRA_DISCOVERED_HOST, it) }
+    })
   }
 
   private fun buildNotification(message: String): Notification {
@@ -281,6 +310,7 @@ class ExternalAIService : Service() {
 
   private fun stopWorkerOnly() {
     runToken?.set(false)
+    clientConnected = false
     try {
       frameSocket?.close()
     } catch (_: Exception) {
@@ -312,12 +342,22 @@ class ExternalAIService : Service() {
     const val EXTRA_THRESHOLD = "threshold"
     const val EXTRA_TARGET_FPS = "target_fps"
     const val EXTRA_MODEL_URI = "model_uri"
+    const val EXTRA_AUTO_DISCOVER = "auto_discover"
     const val EXTRA_STATUS = "status"
+    const val EXTRA_DISCOVERED_HOST = "discovered_host"
+    @Volatile var serviceActive = false
+      private set
+    @Volatile var clientConnected = false
+      private set
     private const val CHANNEL_ID = "external_ai"
     private const val NOTIFICATION_ID = 7724
     private const val MAX_MODEL_BYTES = 256L * 1024L * 1024L
     private const val MIN_RETRY_DELAY_MS = 1_000L
     private const val MAX_RETRY_DELAY_MS = 30_000L
+    private const val MIN_DISCOVERY_RETRY_DELAY_MS = 5_000L
+    private const val MAX_DISCOVERY_RETRY_DELAY_MS = 30_000L
+    private const val PREFERENCES_NAME = "external_ai"
+    private const val PREFERENCE_HOST = "host"
   }
 }
 
@@ -328,6 +368,7 @@ private data class ServiceConfig(
   val threshold: Float,
   val targetFps: Int,
   val modelUri: Uri,
+  val autoDiscover: Boolean,
 ) {
   companion object {
     fun fromIntent(intent: Intent): ServiceConfig = ServiceConfig(
@@ -337,6 +378,7 @@ private data class ServiceConfig(
       threshold = intent.getFloatExtra(ExternalAIService.EXTRA_THRESHOLD, 0.35f),
       targetFps = max(1, intent.getIntExtra(ExternalAIService.EXTRA_TARGET_FPS, 5)),
       modelUri = Uri.parse(requireNotNull(intent.getStringExtra(ExternalAIService.EXTRA_MODEL_URI))),
+      autoDiscover = intent.getBooleanExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, true),
     )
   }
 }

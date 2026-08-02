@@ -277,18 +277,18 @@ To test video transmission, result reception, and both display projections witho
 
 #### Connecting after installing the Android app
 
-The Kotlin app for real-phone testing is under `tools/android_ai_client/`. It requires a 64-bit ARM phone with Android 10 or newer, and no YOLO ONNX model is bundled. The source has no device-model gate, but C3X is the current validation target; C3 and C4 still require an on-device road-stream and UI test. Follow that directory's `README.md` for APK build/installation and supported model formats.
+The Kotlin app for real-phone testing is under `tools/android_ai_client/`. It requires a 64-bit ARM phone with Android 10 or newer, and no YOLO ONNX model is bundled. Select the model in the Android app with **YOLO ONNX 모델 선택**, not on the C3X. The source has no device-model gate, but C3X is the current validation target; C3 and C4 still require an on-device road-stream and UI test. See the [English Android installation and pairing guide](../../../tools/android_ai_client/README.en.md) for APK build/installation and supported model formats.
 
-Joining the same Wi-Fi does not connect automatically. The app has no automatic discovery or boot start.
+When a phone hotspot changes the C3X address, the app checks its saved address and then probes only the frame port in the local private IPv4 `/24`. It accepts and saves only a server whose first four bytes are `CAI1`. With automatic connection enabled and a saved model, opening the app starts the discovery service and YOLO starts as soon as the device is found. Discovery is bounded to at most two local `/24` networks and does not scan the internet or an arbitrary port range. It does not start at boot, so reopen the app after a phone reboot or force-stop.
 
 1. Connect the phone and C3/C3X/C4 to the same trusted Wi-Fi or phone hotspot and disable AP/client isolation.
 2. Set `ExternalAIEnabled=1` in Carrot Web and also set `ExternalAIShowOverlay=1` to show objects.
-3. Put the phone address in `ExternalAIPhoneIP`. In the Android **Device IP** field, enter the address assigned to the C3/C3X/C4 instead.
+3. On a phone hotspot, put the phone's hotspot gateway address in `ExternalAIPhoneIP`. It may be left empty while testing if unknown, but only on a trusted dedicated network.
 4. Keep TCP `7724` and UDP `7725` unless both sides are changed together.
 5. Put the CarrotPilot device on-road. `phoneaid` runs only on-road, so the app cannot connect from the parking screen.
-6. Select a compatible YOLO ONNX model, press **Start**, and confirm **Connected** plus an `eNPU` or `eCPU` badge.
+6. Select a compatible YOLO ONNX model once in the Android app. With the default automatic connection enabled, it starts after discovery without another button press. If discovery fails, enter the current device address and use **입력 IP로 시작**. Confirm **연결됨** plus an `eNPU` or `eCPU` badge.
 
-The app tries NNAPI first and automatically falls back to CPU if accelerated session creation fails. While connected, its persistent notification, partial wake lock, and high-performance Wi-Fi lock keep inference running with the screen off. This is a performance mode rather than a battery-saving mode, so charging and thermal monitoring are recommended. If the device goes off-road, external AI is disabled, Wi-Fi disappears, or TCP disconnects, the app releases both performance locks and enters a low-power reconnect wait of 1, 2, 4, 8, 16, then at most 30 seconds. For zero background use, press **Stop** in the app or notification; this ends inference, networking, locks, and retries so Android's normal idle policy applies. The service does not restart at boot, and an Android vendor may defer reconnection while the phone sleeps.
+The app tries NNAPI first and automatically falls back to CPU if accelerated session creation fails. During discovery it does not open the model or NPU session and holds neither a wake lock nor a high-performance Wi-Fi lock; its discovery wait increases through 5, 10, and 20 seconds to a 30-second cap. While connected, both performance locks keep inference running with the screen off, so charging and thermal monitoring are recommended. If the device goes off-road, external AI is disabled, Wi-Fi disappears, or TCP disconnects, the locks are released immediately and automatic mode scans again if the address changed. For zero background use, press **중지** in the app; this disables automatic connection and ends discovery, inference, networking, and locks. The notification action also ends the current service but preserves the automatic-connection preference. Android or an OEM may defer discovery and reconnection while the phone sleeps.
 
 <a id="system"></a>
 ## System

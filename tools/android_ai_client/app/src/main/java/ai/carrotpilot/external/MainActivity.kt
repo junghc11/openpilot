@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -28,13 +29,21 @@ class MainActivity : Activity() {
   private lateinit var resultPort: EditText
   private lateinit var threshold: EditText
   private lateinit var inferenceFps: EditText
+  private lateinit var autoConnect: CheckBox
   private lateinit var modelLabel: TextView
   private lateinit var status: TextView
   private var modelUri: Uri? = null
+  private var activityStarted = false
 
   private val statusReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
       status.text = intent?.getStringExtra(ExternalAIService.EXTRA_STATUS) ?: "상태 정보 없음"
+      intent?.getStringExtra(ExternalAIService.EXTRA_DISCOVERED_HOST)?.let { discoveredHost ->
+        if (discoveredHost.isNotBlank() && host.text.toString() != discoveredHost) {
+          host.setText(discoveredHost)
+          preferences.edit().putString(KEY_HOST, discoveredHost).apply()
+        }
+      }
     }
   }
 
@@ -50,6 +59,7 @@ class MainActivity : Activity() {
   @SuppressLint("UnspecifiedRegisterReceiverFlag")
   override fun onStart() {
     super.onStart()
+    activityStarted = true
     val filter = IntentFilter(ExternalAIService.ACTION_STATUS)
     if (Build.VERSION.SDK_INT >= 33) {
       registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -57,9 +67,15 @@ class MainActivity : Activity() {
       @Suppress("DEPRECATION")
       registerReceiver(statusReceiver, filter)
     }
+    if (autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive) {
+      startClient(autoDiscover = true)
+    } else if (autoConnect.isChecked && modelUri == null) {
+      status.text = "YOLO ONNX 모델을 선택하면 자동 검색을 시작합니다."
+    }
   }
 
   override fun onStop() {
+    activityStarted = false
     unregisterReceiver(statusReceiver)
     super.onStop()
   }
@@ -77,6 +93,7 @@ class MainActivity : Activity() {
     modelUri = uri
     preferences.edit().putString(KEY_MODEL_URI, uri.toString()).apply()
     updateModelLabel()
+    if (activityStarted && autoConnect.isChecked) startClient(autoDiscover = true)
   }
 
   private fun buildContent(): ScrollView {
@@ -99,13 +116,25 @@ class MainActivity : Activity() {
       setPadding(0, (8 * density).toInt(), 0, (18 * density).toInt())
     })
     root.addView(TextView(this).apply {
-      text = "같은 Wi-Fi만으로 자동 연결되지 않습니다. 기기 IP와 모델을 지정한 뒤 시작을 누르세요."
+      text = "스마트폰 핫스팟을 포함한 같은 사설망에서 C3/C3X/C4를 자동 검색합니다."
       textSize = 14f
       setTextColor(Color.LTGRAY)
-      setPadding(0, 0, 0, (18 * density).toInt())
+      setPadding(0, 0, 0, (10 * density).toInt())
     })
 
-    host = addField(root, "기기 IP (C3/C3X/C4)", "192.168.0.10")
+    autoConnect = CheckBox(this).apply {
+      text = "앱 실행 시 같은 망 자동 검색 및 시작"
+      setTextColor(Color.WHITE)
+      setOnCheckedChangeListener { _, checked ->
+        preferences.edit().putBoolean(KEY_AUTO_CONNECT, checked).apply()
+        if (checked && activityStarted && modelUri != null && !ExternalAIService.serviceActive) {
+          startClient(autoDiscover = true)
+        }
+      }
+    }
+    root.addView(autoConnect, matchWidth())
+
+    host = addField(root, "기기 IP (수동 연결 또는 최근 검색값)", "192.168.0.10")
     framePort = addField(root, "영상 TCP 포트", "7724")
     resultPort = addField(root, "결과 UDP 포트", "7725")
     threshold = addField(root, "신뢰도 임계값 (0.1~0.95)", "0.35")
@@ -121,19 +150,24 @@ class MainActivity : Activity() {
       text = "YOLO ONNX 모델 선택"
       setOnClickListener { selectModel() }
     }, matchWidth())
+    root.addView(Button(this).apply {
+      text = "같은 망 자동 검색 후 시작"
+      setOnClickListener { startClient(autoDiscover = true) }
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = (16 * density).toInt()
+    })
 
-    val controls = LinearLayout(this).apply {
-      orientation = LinearLayout.HORIZONTAL
-      setPadding(0, (16 * density).toInt(), 0, 0)
-    }
+    val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
     controls.addView(Button(this).apply {
-      text = "시작"
-      setOnClickListener { startClient() }
+      text = "입력 IP로 시작"
+      setOnClickListener { startClient(autoDiscover = false) }
     }, weighted())
     controls.addView(Button(this).apply {
       text = "중지"
       setOnClickListener {
+        autoConnect.isChecked = false
         startService(Intent(this@MainActivity, ExternalAIService::class.java).setAction(ExternalAIService.ACTION_STOP))
+        status.text = "중지됨"
       }
     }, weighted())
     root.addView(controls, matchWidth())
@@ -177,7 +211,7 @@ class MainActivity : Activity() {
     startActivityForResult(intent, REQUEST_MODEL)
   }
 
-  private fun startClient() {
+  private fun startClient(autoDiscover: Boolean) {
     val uri = modelUri
     val config = try {
       ClientConfig(
@@ -187,12 +221,14 @@ class MainActivity : Activity() {
         threshold = threshold.text.toString().toFloat(),
         targetFps = inferenceFps.text.toString().toInt(),
         modelUri = uri ?: error("YOLO ONNX 모델을 선택하세요."),
+        autoDiscover = autoDiscover,
       ).also { it.validate() }
     } catch (error: Exception) {
       Toast.makeText(this, error.message ?: "설정값을 확인하세요.", Toast.LENGTH_LONG).show()
       return
     }
     saveSettings(config)
+    status.text = if (autoDiscover) "같은 망에서 CarrotPilot 기기 검색 준비 중" else "입력 IP 연결 준비 중"
     val intent = Intent(this, ExternalAIService::class.java).apply {
       action = ExternalAIService.ACTION_START
       putExtra(ExternalAIService.EXTRA_HOST, config.host)
@@ -201,6 +237,7 @@ class MainActivity : Activity() {
       putExtra(ExternalAIService.EXTRA_THRESHOLD, config.threshold)
       putExtra(ExternalAIService.EXTRA_TARGET_FPS, config.targetFps)
       putExtra(ExternalAIService.EXTRA_MODEL_URI, config.modelUri.toString())
+      putExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, config.autoDiscover)
     }
     startForegroundService(intent)
   }
@@ -211,6 +248,7 @@ class MainActivity : Activity() {
     resultPort.setText(preferences.getInt(KEY_RESULT_PORT, 7725).toString())
     threshold.setText(preferences.getFloat(KEY_THRESHOLD, 0.35f).toString())
     inferenceFps.setText(preferences.getInt(KEY_TARGET_FPS, 5).toString())
+    autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
     modelUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
     updateModelLabel()
   }
@@ -241,6 +279,7 @@ class MainActivity : Activity() {
     private const val KEY_THRESHOLD = "threshold"
     private const val KEY_TARGET_FPS = "target_fps"
     private const val KEY_MODEL_URI = "model_uri"
+    private const val KEY_AUTO_CONNECT = "auto_connect"
     private const val REQUEST_MODEL = 10
     private const val REQUEST_NOTIFICATIONS = 11
   }
@@ -253,9 +292,10 @@ data class ClientConfig(
   val threshold: Float,
   val targetFps: Int,
   val modelUri: Uri,
+  val autoDiscover: Boolean,
 ) {
   fun validate() {
-    require(host.isNotBlank()) { "C3/C3X/C4 IP를 입력하세요." }
+    require(autoDiscover || host.isNotBlank()) { "수동 연결에는 C3/C3X/C4 IP가 필요합니다." }
     require(framePort in 1..65535) { "영상 포트는 1~65535 범위여야 합니다." }
     require(resultPort in 1..65535) { "결과 포트는 1~65535 범위여야 합니다." }
     require(threshold in 0.1f..0.95f) { "신뢰도는 0.1~0.95 범위여야 합니다." }
