@@ -150,6 +150,9 @@ def enable_youtube_wide_encoder(started, params, CP: car.CarParams) -> bool:
 def enable_cluster_hud(started, params, CP: car.CarParams) -> bool:
   return cluster_hud_active(params)
 
+def enable_external_ai(started, params, CP: car.CarParams) -> bool:
+  return started and params.get_bool("ExternalAIEnabled")
+
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
@@ -221,6 +224,7 @@ procs = [
   PythonProcess("carrot_server", "openpilot.selfdrive.carrot.carrot_server", always_run, enabled=not CARROT_WEB_EXTERNAL),
   PythonProcess("cweb_push", "openpilot.selfdrive.carrot.cweb_push", always_run, enabled=not PC),
   PythonProcess("carrot_cluster", "openpilot.selfdrive.carrot.cluster_autorun", enable_cluster_hud, restart_if_crash=True),
+  PythonProcess("phoneaid", "openpilot.selfdrive.carrot.external_ai.phoneaid", enable_external_ai, restart_if_crash=True),
 
   #Xiaoge data broadcaster (conditional on ShareData param)
   PythonProcess("xiaoge_data", "openpilot.selfdrive.carrot.xiaoge_data", enable_xiaoge_data),

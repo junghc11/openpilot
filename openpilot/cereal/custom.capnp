@@ -215,7 +215,33 @@ struct CarrotNaviMedia @0xf35cc4560bbf6ec2 {
 	payload @14 :Data;
 }
 
-struct CustomReserved3 @0xda96579883444c35 {
+struct PhoneAIState @0xda96579883444c35 {
+	struct Object {
+		classId @0 :UInt16;
+		className @1 :Text;
+		confidence @2 :Float32;
+		x1 @3 :Float32;
+		y1 @4 :Float32;
+		x2 @5 :Float32;
+		y2 @6 :Float32;
+	}
+
+	valid @0 :Bool;
+	connected @1 :Bool;
+	protocolVersion @2 :UInt16;
+	frameId @3 :UInt64;
+	sourceTimestampMonotonicNanos @4 :UInt64;
+	receiveTimestampMonotonicNanos @5 :UInt64;
+	latencyMs @6 :Float32;
+	inferenceMs @7 :Float32;
+	modelName @8 :Text;
+	backend @9 :Text;
+	objects @10 :List(Object);
+	acceptedPackets @11 :UInt32;
+	rejectedPackets @12 :UInt32;
+	rejectedSenders @13 :UInt32;
+	lastSenderIp @14 :Text;
+	lastError @15 :Text;
 }
 
 struct CustomReserved4 @0x80ae746ee2596b11 {

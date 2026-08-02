@@ -276,6 +276,12 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 
 리플레이 이벤트 타임라인은 당근내비 연결과 경로 세션 변경, 현재·다음 주행 안내, 권장 차선, 도로 안전 안내, 구간단속, 신호와 교차로 안내의 변화를 구분해 표시합니다. 이 항목들은 리플레이에 기록된 상태 변화를 검토하기 위한 이벤트 라벨입니다.
 
+### 외부 스마트폰 AI 실험 기능
+
+`ExternalAIEnabled`는 외부 안드로이드 스마트폰이 보낸 객체 탐지 결과를 받는 실험 기능입니다. 기본값은 꺼짐(`0`)이며, 현재 단계에서는 시각화와 통신 진단에만 사용합니다. 이 데이터는 조향, 가감속, 제동, 레이더 또는 안전 모델에 전달되지 않습니다. 기능을 켠 경우에만 주행 중 `phoneaid`가 실행되고 UDP 결과 포트(기본 `7725`)를 엽니다. 연결이 끊기거나 결과가 2초 동안 없으면 오래된 객체를 즉시 숨기며 기존 주행 기능은 계속 동작합니다.
+
+`ExternalAIPhoneIP`가 비어 있으면 어떤 IPv4 발신자도 받을 수 있고, IP를 지정하면 그 주소의 결과만 허용합니다. `ExternalAIResultPort`는 결과 UDP 포트, `ExternalAIMaxLatencyMs`는 C3X가 프레임에 붙인 단조시계 기준 최대 왕복 지연(기본 300ms)입니다. `ExternalAIFramePort`, `ExternalAIFrameFPS`, `ExternalAIJpegQuality`는 다음 영상 송신 단계용으로 예약되어 있으며 아직 영상을 전송하지 않습니다. `ExternalAIShowOverlay`와 `ExternalAIDebug`도 후속 UI 연결 전까지 저장만 됩니다. 실제 차량에서 활성화하기 전에 정적·녹화 영상과 더미 송신기로 먼저 확인하세요.
+
 <a id="system"></a>
 ## 시스템
 

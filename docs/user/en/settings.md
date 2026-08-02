@@ -265,6 +265,12 @@ Carrot Vision provides separate **Show AR** and **AR debug** controls outside th
 
 The Replay event timeline also identifies Carrot Navi connection and route-session changes, current and next maneuvers, lane guidance, road-safety alerts, average-speed zones, traffic signals, and intersection guidance. These entries are labels for reviewing transitions recorded in the replay.
 
+### Experimental external-phone AI
+
+`ExternalAIEnabled` enables the experimental receiver for object detections produced by an external Android phone. It defaults to off (`0`) and is currently limited to visualization and communication diagnostics. Its data is not delivered to steering, acceleration, braking, radar, or the safety model. When enabled, `phoneaid` runs only while on-road and opens the UDP result port (default `7725`). A disconnect or two seconds without a result immediately hides stale objects while normal driving operation continues.
+
+Leave `ExternalAIPhoneIP` empty to accept any IPv4 sender, or set it to accept results only from that address. `ExternalAIResultPort` selects the result UDP port, and `ExternalAIMaxLatencyMs` sets the maximum round-trip age using the monotonic timestamp originally attached by the C3X (default 300 ms). `ExternalAIFramePort`, `ExternalAIFrameFPS`, and `ExternalAIJpegQuality` are reserved for the next video-sender stage and do not transmit video yet. `ExternalAIShowOverlay` and `ExternalAIDebug` are also stored for the later UI connection. Validate with static or recorded imagery and a mock sender before enabling it in a vehicle.
+
 <a id="system"></a>
 ## System
 
