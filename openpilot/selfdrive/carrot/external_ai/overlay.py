@@ -18,6 +18,12 @@ NPU_BADGE_BACKENDS = frozenset((
   "onnxruntime-qnn",
   "qnn",
 ))
+CPU_BADGE_BACKENDS = frozenset((
+  "onnxruntime-cpu",
+  "onnxruntime-cpu-fallback",
+  "cpu",
+  "cpu-fallback",
+))
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +45,16 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return default
 
 
-def phone_ai_npu_badge_active(state: Any) -> bool:
-  """Report whether the phone selected an external accelerated inference backend."""
+def phone_ai_compute_badge(state: Any) -> str:
+  """Return the active external compute badge, or an empty string while disconnected."""
   if not bool(_field(state, "valid", False)) or not bool(_field(state, "connected", False)):
-    return False
+    return ""
   backend = str(_field(state, "backend", "") or "").strip().lower()
-  return backend in NPU_BADGE_BACKENDS or backend.startswith("qnn-")
+  if backend in NPU_BADGE_BACKENDS or backend.startswith("qnn-"):
+    return "eNPU"
+  if backend in CPU_BADGE_BACKENDS or backend.startswith("onnxruntime-cpu-"):
+    return "eCPU"
+  return ""
 
 
 def phone_ai_status_text(

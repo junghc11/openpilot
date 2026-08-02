@@ -1,6 +1,6 @@
 # Carrot External AI Android client
 
-This experimental Android app connects to `phoneaid` on a C3X, receives 640×360 JPEG road frames, runs a COCO YOLO ONNX model, and returns only normalized object detections. Results are visualization-only. The app contains no vehicle-control, CAN, Panda, radar, or safety integration.
+This experimental Android app connects to `phoneaid` on a C3, C3X, or C4 running this CarrotPilot branch, receives 640×360 JPEG road frames, runs a COCO YOLO ONNX model, and returns only normalized object detections. Results are visualization-only. The app contains no vehicle-control, CAN, Panda, radar, or safety integration. The process has no hardware-model gate, but the current validation target is C3X; C3 and C4 still require an on-device road-stream and UI test.
 
 ## Supported first-stage configuration
 
@@ -33,15 +33,27 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 The app requests notification permission on Android 13 or newer. Start the client from its visible activity; Android restricts launching foreground services from the background. While running, a persistent notification, partial wake lock, and high-performance Wi-Fi lock keep reception and inference active with the screen off. The wake lock has a six-hour safety timeout, so restart the client for an unusually long continuous session.
 
-## C3X setup
+## Pairing with C3, C3X, or C4
 
-1. Put the phone and C3X on a trusted dedicated Wi-Fi network.
-2. Set `ExternalAIEnabled=1` and `ExternalAIShowOverlay=1` on the C3X.
-3. Set `ExternalAIPhoneIP` to the phone address. The empty value is useful only for initial diagnosis.
+Being on the same Wi-Fi network is necessary but does not start or discover the connection automatically. The app has no mDNS/discovery, boot start, or automatic foreground-service start.
+
+1. Install this CarrotPilot branch on the device and put it and the phone on the same trusted Wi-Fi or phone hotspot. Disable client/AP isolation.
+2. Find both addresses: the app needs the CarrotPilot device address, while `ExternalAIPhoneIP` on the device must contain the phone address. Do not assume the example `192.168.0.10` is correct.
+3. In Carrot Web, enable `ExternalAIEnabled=1`. Enable `ExternalAIShowOverlay=1` to show detections; the compute badge remains visible even when object overlays are hidden.
 4. Keep TCP frame port `7724` and UDP result port `7725` unless both ends are changed together.
-5. Enter the C3X address in the app, select the ONNX model, and press **시작**.
+5. Put the CarrotPilot device on-road. `phoneaid` runs only while the manager reports `started`; an off-road device does not open the frame server.
+6. Open the Android app, enter the CarrotPilot device address, select a compatible YOLO ONNX model, and press **시작**.
+7. Confirm **연결됨** in the app. The device shows green `eNPU` for NNAPI/QNN or blue `eCPU` for the ONNX Runtime CPU backend. CPU fallback still performs YOLO, but usually with lower throughput and higher battery use.
 
-The status panel reports connection state, receive FPS, inference FPS, average inference time, object count, the selected NNAPI or CPU-fallback backend, battery temperature, and Android thermal status. The same backend identifier is returned to the C3X with every result. End-to-end round-trip age is calculated on the C3X because the phone and C3X monotonic clocks have different origins.
+Settings and the selected model URI persist, but the service is `START_NOT_STICKY`: after a phone reboot, an Android process stop, or pressing **중지**, open the app and press **시작** again. The status panel reports connection state, receive FPS, inference FPS, average inference time, object count, selected backend, battery temperature, and Android thermal status. The same backend identifier is returned with every result. End-to-end round-trip age is calculated on the CarrotPilot device because its monotonic clock and the phone clock have different origins.
+
+## Screen-off and power behavior
+
+- Before **시작**, and after the app or notification **중지** action, no inference worker, wake lock, high-performance Wi-Fi lock, or reconnect loop remains. Android can place the app in its normal idle state.
+- While TCP video is connected, the foreground service holds a partial wake lock and high-performance Wi-Fi lock so reception and inference continue with the screen off. This is a performance mode, not a battery-saving mode; charging and thermal monitoring are recommended.
+- If the CarrotPilot device is off-road, `ExternalAIEnabled` is disabled, Wi-Fi disappears, or TCP disconnects, the app releases both performance locks and retries with a 1, 2, 4, 8, 16, then 30-second capped backoff. The low-priority foreground notification remains. Android or an OEM may defer retries while the phone sleeps because the app does not request a battery-optimization exemption.
+- For zero background use, press **중지** instead of leaving the client in reconnect wait. The service is not registered to start at boot.
+- The connected partial wake lock has a six-hour safety timeout. Restart the client for an unusually long continuous session.
 
 ## Protocol
 

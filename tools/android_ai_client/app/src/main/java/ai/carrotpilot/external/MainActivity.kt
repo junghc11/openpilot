@@ -98,8 +98,14 @@ class MainActivity : Activity() {
       setTextColor(Color.rgb(255, 183, 77))
       setPadding(0, (8 * density).toInt(), 0, (18 * density).toInt())
     })
+    root.addView(TextView(this).apply {
+      text = "같은 Wi-Fi만으로 자동 연결되지 않습니다. 기기 IP와 모델을 지정한 뒤 시작을 누르세요."
+      textSize = 14f
+      setTextColor(Color.LTGRAY)
+      setPadding(0, 0, 0, (18 * density).toInt())
+    })
 
-    host = addField(root, "C3X IP", "192.168.0.10")
+    host = addField(root, "기기 IP (C3/C3X/C4)", "192.168.0.10")
     framePort = addField(root, "영상 TCP 포트", "7724")
     resultPort = addField(root, "결과 UDP 포트", "7725")
     threshold = addField(root, "신뢰도 임계값 (0.1~0.95)", "0.35")
@@ -249,7 +255,7 @@ data class ClientConfig(
   val modelUri: Uri,
 ) {
   fun validate() {
-    require(host.isNotBlank()) { "C3X IP를 입력하세요." }
+    require(host.isNotBlank()) { "C3/C3X/C4 IP를 입력하세요." }
     require(framePort in 1..65535) { "영상 포트는 1~65535 범위여야 합니다." }
     require(resultPort in 1..65535) { "결과 포트는 1~65535 범위여야 합니다." }
     require(threshold in 0.1f..0.95f) { "신뢰도는 0.1~0.95 범위여야 합니다." }

@@ -35,7 +35,7 @@ object FrameProtocol {
 
   fun readFrame(input: DataInputStream): C3XFrame {
     val receivedMagic = ByteArray(4).also(input::readFully)
-    require(receivedMagic.contentEquals(magic)) { "잘못된 C3X 영상 매직 값" }
+    require(receivedMagic.contentEquals(magic)) { "잘못된 기기 영상 매직 값" }
     val headerSize = input.readInt()
     val jpegSize = input.readInt()
     require(headerSize in 1..maxHeaderBytes) { "잘못된 영상 헤더 크기: $headerSize" }

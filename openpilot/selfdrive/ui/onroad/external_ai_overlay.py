@@ -6,7 +6,7 @@ import pyray as rl
 
 from openpilot.selfdrive.carrot.external_ai.overlay import (
   ExternalAIOverlayObject,
-  phone_ai_npu_badge_active,
+  phone_ai_compute_badge,
   phone_ai_overlay_objects,
   phone_ai_status_text,
 )
@@ -53,9 +53,10 @@ class ExternalAIOverlayRenderer:
       service_alive = False
       service_valid = False
       state = None
+    compute_badge = phone_ai_compute_badge(state)
     if not self._show_overlay:
-      if phone_ai_npu_badge_active(state):
-        self._draw_enpu_badge(rect, below_status=False)
+      if compute_badge:
+        self._draw_compute_badge(rect, compute_badge, below_status=False)
       return
     status_text, connected = phone_ai_status_text(
       state,
@@ -75,8 +76,8 @@ class ExternalAIOverlayRenderer:
     for item in objects:
       self._draw_object(item)
     self._draw_status(rect, status_text, connected)
-    if phone_ai_npu_badge_active(state):
-      self._draw_enpu_badge(rect, below_status=True)
+    if compute_badge:
+      self._draw_compute_badge(rect, compute_badge, below_status=True)
 
   def _draw_status(self, rect: rl.Rectangle, text: str, connected: bool) -> None:
     font_size = max(22, min(32, int(rect.height * 0.032)))
@@ -104,16 +105,17 @@ class ExternalAIOverlayRenderer:
       y_offset=0.0,
     )
 
-  def _draw_enpu_badge(self, rect: rl.Rectangle, *, below_status: bool) -> None:
+  def _draw_compute_badge(self, rect: rl.Rectangle, text: str, *, below_status: bool) -> None:
     width = 124.0
     height = 48.0
     x = rect.x + (rect.width - width) * 0.5
     y = rect.y + (82.0 if below_status else 18.0)
     badge = rl.Rectangle(x, y, width, height)
-    rl.draw_rectangle_rounded(badge, 0.25, 8, rl.GREEN)
+    fill = rl.GREEN if text == "eNPU" else rl.Color(0, 122, 255, 230)
+    rl.draw_rectangle_rounded(badge, 0.25, 8, fill)
     rl.draw_rectangle_rounded_lines_ex(badge, 0.25, 8, 2.0, rl.WHITE)
     draw_text_ui_style(
-      "eNPU",
+      text,
       x + width * 0.5,
       y + height - 10.0,
       34,

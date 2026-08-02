@@ -60,7 +60,6 @@ class ExternalAIService : Service() {
 
   private fun startClient(config: ServiceConfig) {
     stopWorkerOnly()
-    acquirePerformanceLocks()
     val token = AtomicBoolean(true)
     runToken = token
     worker = Thread({ runClient(config, token) }, "carrot-external-ai").apply { start() }
@@ -79,16 +78,19 @@ class ExternalAIService : Service() {
       return
     }
     val modelName = config.modelUri.lastPathSegment ?: "yolo.onnx"
+    var retryDelayMs = MIN_RETRY_DELAY_MS
     try {
       YoloDetector(modelFile, config.threshold).use { detector ->
         while (token.get()) {
           try {
-            updateStatus("C3X 연결 중: ${config.host}:${config.framePort}")
+            updateStatus("기기 연결 중: ${config.host}:${config.framePort}")
             Socket().use { socket ->
               frameSocket = socket
               socket.tcpNoDelay = true
               socket.soTimeout = 5_000
               socket.connect(InetSocketAddress(config.host, config.framePort), 3_000)
+              acquirePerformanceLocks()
+              retryDelayMs = MIN_RETRY_DELAY_MS
               DataInputStream(socket.getInputStream().buffered()).use { input ->
                 DatagramSocket().use { resultSocket ->
                   processFrames(config, detector, modelName, input, resultSocket, token)
@@ -96,12 +98,17 @@ class ExternalAIService : Service() {
               }
             }
           } catch (error: Exception) {
+            if (runToken === token) releasePerformanceLocks()
             if (token.get()) {
-              updateStatus("연결 재시도 중\n${error.javaClass.simpleName}: ${error.message}")
-              SystemClock.sleep(1_000)
+              updateStatus("저전력 재연결 대기 ${retryDelayMs / 1_000}초\n${error.javaClass.simpleName}: ${error.message}")
+              SystemClock.sleep(retryDelayMs)
+              retryDelayMs = (retryDelayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
             }
           } finally {
-            if (runToken === token) frameSocket = null
+            if (runToken === token) {
+              frameSocket = null
+              releasePerformanceLocks()
+            }
           }
         }
       }
@@ -138,7 +145,7 @@ class ExternalAIService : Service() {
       val nowNs = SystemClock.elapsedRealtimeNanos()
       if (nowNs - lastInferenceStartNs < targetIntervalNs) continue
       val bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.size)
-        ?: error("C3X JPEG 디코딩 실패")
+        ?: error("수신 JPEG 디코딩 실패")
       val inferenceStartNs = SystemClock.elapsedRealtimeNanos()
       val detections = try {
         detector.detect(bitmap)
@@ -196,7 +203,7 @@ class ExternalAIService : Service() {
       "수신 ${"%.1f".format(receiveFps)} FPS · 추론 ${"%.1f".format(inferenceFps)} FPS\n" +
       "평균 추론 ${"%.1f".format(averageInferenceMs)} ms · 객체 ${objectCount}개\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
-      "열 상태 $thermalStatus · 왕복 지연은 C3X에서 측정"
+      "열 상태 $thermalStatus · 왕복 지연은 기기에서 측정"
   }
 
   private fun copyModelToCache(uri: Uri): File {
@@ -246,7 +253,7 @@ class ExternalAIService : Service() {
 
   private fun createNotificationChannel() {
     val channel = NotificationChannel(CHANNEL_ID, "External AI", NotificationManager.IMPORTANCE_LOW).apply {
-      description = "C3X 영상 수신 및 YOLO 추론 상태"
+      description = "C3/C3X/C4 영상 수신 및 YOLO 추론 상태"
     }
     (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
   }
@@ -309,6 +316,8 @@ class ExternalAIService : Service() {
     private const val CHANNEL_ID = "external_ai"
     private const val NOTIFICATION_ID = 7724
     private const val MAX_MODEL_BYTES = 256L * 1024L * 1024L
+    private const val MIN_RETRY_DELAY_MS = 1_000L
+    private const val MAX_RETRY_DELAY_MS = 30_000L
   }
 }
 
