@@ -9,7 +9,7 @@ CLUSTER_DIR = Path(__file__).resolve().parents[1] / "cluster"
 sys.path.insert(0, str(CLUSTER_DIR))
 
 from cluster_models import ClusterUiState, DetectedVehicle, LaneMarking
-from cluster_scene import build_cluster_scene
+from cluster_scene import build_cluster_scene, detected_vehicles_for_display
 
 
 def cluster_state(**changes) -> ClusterUiState:
@@ -71,3 +71,23 @@ def test_unknown_external_ai_class_preserves_marker_fallback() -> None:
   box = next(box for box in scene.vehicles if box.label == "cone")
 
   assert box.model_key == ""
+
+
+def test_external_ai_class_can_merge_with_front_radar_position() -> None:
+  radar = DetectedVehicle("L1", 20.0, 0.2, source="radarState", primary=True, radar_track_id=12)
+  classified = DetectedVehicle(
+    "AI CAR",
+    21.0,
+    0.3,
+    source="externalAI",
+    object_class="car",
+    object_track_id=99,
+    probability=0.92,
+  )
+
+  merged = detected_vehicles_for_display((radar, classified), cluster_state())
+
+  assert len(merged) == 1
+  assert merged[0].source == "radarState"
+  assert merged[0].object_class == "car"
+  assert merged[0].object_track_id == 99

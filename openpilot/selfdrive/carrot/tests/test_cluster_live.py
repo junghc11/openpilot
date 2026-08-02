@@ -84,8 +84,48 @@ def test_live_driving_mode_requires_alive_valid_longitudinal_plan(alive, valid, 
 
 def test_live_cluster_avoids_unused_gps_subscriptions_after_trace_removal() -> None:
   assert "livePose" in LIVE_SERVICES_BASE
+  assert "phoneAIState" in LIVE_SERVICES_BASE
   assert "gpsLocationExternal" not in LIVE_SERVICES_BASE
   assert "gpsLocation" not in LIVE_SERVICES_BASE
+
+
+def test_live_cluster_converts_phone_ai_objects_to_visualization_only_detections() -> None:
+  phone_state = SimpleNamespace(
+    valid=True,
+    connected=True,
+    frameId=7,
+    objects=(SimpleNamespace(
+      className="truck",
+      confidence=0.93,
+      x1=0.55,
+      y1=0.3,
+      x2=0.85,
+      y2=0.8,
+    ),),
+  )
+  source = object.__new__(OpenpilotLiveSource)
+  source.params = SimpleNamespace(get_bool=lambda name: name == "ExternalAIShowOverlay")
+  source._service_alive = lambda service: service == "phoneAIState"
+  source._service_valid = lambda service: service == "phoneAIState"
+  source._service_data = lambda service: phone_state if service == "phoneAIState" else None
+
+  vehicles = source._external_ai_detected_vehicles()
+
+  assert len(vehicles) == 1
+  assert vehicles[0].source == "externalAI"
+  assert vehicles[0].object_class == "truck"
+  assert vehicles[0].probability == pytest.approx(0.93)
+  assert vehicles[0].lateral_m > 0.0
+
+
+def test_live_cluster_external_ai_overlay_setting_can_hide_detections() -> None:
+  source = object.__new__(OpenpilotLiveSource)
+  source.params = SimpleNamespace(get_bool=lambda _name: False)
+  source._service_alive = lambda service: service == "phoneAIState"
+  source._service_valid = lambda service: service == "phoneAIState"
+  source._service_data = lambda _service: pytest.fail("disabled overlay read phoneAIState")
+
+  assert source._external_ai_detected_vehicles() == ()
 
 
 def test_cached_calibration_is_loaded_for_installation_angle() -> None:

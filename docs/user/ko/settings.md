@@ -280,7 +280,7 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 
 `ExternalAIEnabled`는 외부 안드로이드 스마트폰이 보낸 객체 탐지 결과를 받는 실험 기능입니다. 기본값은 꺼짐(`0`)이며, 현재 단계에서는 시각화와 통신 진단에만 사용합니다. 이 데이터는 조향, 가감속, 제동, 레이더 또는 안전 모델에 전달되지 않습니다. 기능을 켠 경우에만 주행 중 `phoneaid`가 실행되고 UDP 결과 포트(기본 `7725`)를 엽니다. 연결이 끊기거나 결과가 2초 동안 없으면 오래된 객체를 즉시 숨기며 기존 주행 기능은 계속 동작합니다.
 
-`ExternalAIPhoneIP`가 비어 있으면 어떤 IPv4 발신자도 받을 수 있고, IP를 지정하면 그 주소의 결과만 허용합니다. `ExternalAIResultPort`는 결과 UDP 포트, `ExternalAIMaxLatencyMs`는 C3X가 프레임에 붙인 단조시계 기준 최대 왕복 지연(기본 300ms)입니다. `ExternalAIFramePort`, `ExternalAIFrameFPS`, `ExternalAIJpegQuality`는 다음 영상 송신 단계용으로 예약되어 있으며 아직 영상을 전송하지 않습니다. `ExternalAIShowOverlay`와 `ExternalAIDebug`도 후속 UI 연결 전까지 저장만 됩니다. 실제 차량에서 활성화하기 전에 정적·녹화 영상과 더미 송신기로 먼저 확인하세요.
+`ExternalAIPhoneIP`가 비어 있으면 어떤 IPv4 발신자도 받을 수 있고, IP를 지정하면 그 주소의 결과만 허용합니다. `ExternalAIResultPort`는 결과 UDP 포트, `ExternalAIMaxLatencyMs`는 C3X가 프레임에 붙인 단조시계 기준 최대 왕복 지연(기본 300ms)입니다. `ExternalAIShowOverlay`를 켜면 지원 차종을 외부 Cluster HUD의 차종별 3D 형상으로 표시합니다. 바운딩박스 크기로 계산한 거리는 카메라 보정 전의 근사값이며, 가까운 전방 레이더 객체와 일치하면 레이더 위치에 차종 정보만 합칩니다. `ExternalAIFramePort`, `ExternalAIFrameFPS`, `ExternalAIJpegQuality`는 다음 영상 송신 단계용으로 예약되어 있으며 아직 영상을 전송하지 않습니다. `ExternalAIDebug`와 C3X 본체 화면 오버레이도 후속 단계 전까지 비활성입니다. 실제 차량에서 활성화하기 전에 정적·녹화 영상과 더미 송신기로 먼저 확인하세요.
 
 <a id="system"></a>
 ## 시스템

@@ -2119,6 +2119,7 @@ def detected_vehicle_is_front_merge_candidate(vehicle: DetectedVehicle) -> bool:
     return (
         detected_vehicle_is_front_lead(vehicle)
         or vehicle.source.startswith("modelV2")
+        or vehicle.source == "externalAI"
         or vehicle.primary
     )
 

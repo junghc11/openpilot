@@ -12,6 +12,7 @@ from cluster_config import BLUE, DEFAULT_LANE_WIDTH_M, SHOW_PLOT_MODE_PARAM
 from cluster_models import (
     ClusterUiState,
     DebugPlotSnapshot,
+    DetectedVehicle,
     LaneMarking,
     LiveDebugInfo,
     ModelPathPoint,
@@ -23,6 +24,7 @@ from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_spee
 from cluster_navi_source import NaviIpcMediaSource
 from cluster_route_replay import RouteLogParser, finite_float, frame_to_state, safe_get, safe_optional_float
 from cluster_utils import clamp
+from openpilot.selfdrive.carrot.external_ai.projection import project_phone_ai_state
 
 
 def find_openpilot_root(start: Path) -> Path | None:
@@ -119,6 +121,7 @@ LIVE_SERVICES_BASE = (
     "navRoute",
     "carrotMan",
     "carrotNavi",
+    "phoneAIState",
     "wideRoadCameraState",
 )
 LIVE_CAN_SERVICES = ("can", "sendcan")
@@ -433,7 +436,9 @@ class OpenpilotLiveSource:
                 if desired_speed is not None and 0.0 < desired_speed < 200.0 and desired_speed < state.cruise_kph:
                     cruise_override_kph = desired_speed
                     cruise_override_label = deceleration_source_display_label(desired_source)
-                    cruise_override_color_mode = 2
+                cruise_override_color_mode = 2
+
+        external_ai_vehicles = self._external_ai_detected_vehicles()
 
         return replace(
             state,
@@ -453,6 +458,31 @@ class OpenpilotLiveSource:
             cruise_override_kph=cruise_override_kph,
             cruise_override_label=cruise_override_label,
             cruise_override_color_mode=cruise_override_color_mode,
+            detected_vehicles=tuple((*state.detected_vehicles, *external_ai_vehicles)),
+        )
+
+    def _external_ai_detected_vehicles(self) -> tuple[DetectedVehicle, ...]:
+        if not self._service_alive("phoneAIState") or not self._service_valid("phoneAIState"):
+            return ()
+        params = getattr(self, "params", None)
+        if params is not None:
+            try:
+                if not params.get_bool("ExternalAIShowOverlay"):
+                    return ()
+            except Exception:
+                return ()
+        projected = project_phone_ai_state(self._service_data("phoneAIState"))
+        return tuple(
+            DetectedVehicle(
+                label=f"AI {item.class_name.upper()}",
+                longitudinal_m=item.longitudinal_m,
+                lateral_m=item.lateral_m,
+                source="externalAI",
+                probability=item.confidence,
+                object_class=item.class_name,
+                object_track_id=item.object_track_id,
+            )
+            for item in projected
         )
 
     def status_text(self) -> str:
