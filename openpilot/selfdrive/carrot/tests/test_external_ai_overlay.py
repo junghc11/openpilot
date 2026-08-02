@@ -5,6 +5,7 @@ import pytest
 
 from openpilot.selfdrive.carrot.external_ai.overlay import (
   external_ai_display_name,
+  phone_ai_npu_badge_active,
   phone_ai_overlay_objects,
   phone_ai_status_text,
 )
@@ -79,6 +80,22 @@ def test_c3x_overlay_status_reports_connection_backend_and_latency() -> None:
   assert is_connected
 
 
+@pytest.mark.parametrize("backend", ("onnxruntime-nnapi", "onnxruntime-qnn", "qnn", "qnn-htp"))
+def test_c3x_enpu_badge_is_active_for_external_accelerators(backend: str) -> None:
+  state = SimpleNamespace(valid=True, connected=True, backend=backend)
+  assert phone_ai_npu_badge_active(state)
+
+
+@pytest.mark.parametrize("state", (
+  SimpleNamespace(valid=True, connected=True, backend="onnxruntime-cpu-fallback"),
+  SimpleNamespace(valid=True, connected=False, backend="onnxruntime-nnapi"),
+  SimpleNamespace(valid=False, connected=True, backend="onnxruntime-nnapi"),
+  None,
+))
+def test_c3x_enpu_badge_is_hidden_without_live_accelerated_backend(state) -> None:
+  assert not phone_ai_npu_badge_active(state)
+
+
 def test_regular_and_mici_ui_share_external_ai_shape_renderer() -> None:
   ui_state_source = (OPENPILOT_ROOT / "selfdrive" / "ui" / "ui_state.py").read_text(encoding="utf-8")
   regular_source = (OPENPILOT_ROOT / "selfdrive" / "ui" / "onroad" / "augmented_road_view.py").read_text(encoding="utf-8")
@@ -91,4 +108,7 @@ def test_regular_and_mici_ui_share_external_ai_shape_renderer() -> None:
   for method in ("_draw_car", "_draw_truck", "_draw_bus", "_draw_motorcycle", "_draw_bicycle", "_draw_person"):
     assert f"def {method}" in renderer_source
   assert "phone_ai_status_text" in renderer_source
+  assert "phone_ai_npu_badge_active" in renderer_source
+  assert "def _draw_enpu_badge" in renderer_source
+  assert '"eNPU"' in renderer_source
   assert "external_ai_display_name" in renderer_source

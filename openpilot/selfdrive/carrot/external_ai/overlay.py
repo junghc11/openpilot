@@ -20,8 +20,15 @@ BACKEND_DISPLAY_NAMES = {
   "onnxruntime-nnapi": "NNAPI",
   "onnxruntime-cpu-fallback": "CPU",
   "onnxruntime-cpu": "CPU",
+  "onnxruntime-qnn": "QNN",
   "qnn": "QNN",
 }
+
+NPU_BADGE_BACKENDS = frozenset((
+  "onnxruntime-nnapi",
+  "onnxruntime-qnn",
+  "qnn",
+))
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +53,14 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 def external_ai_display_name(class_name: str) -> str:
   normalized = str(class_name or "").strip().lower()
   return DISPLAY_NAMES_KO.get(normalized, normalized.upper())
+
+
+def phone_ai_npu_badge_active(state: Any) -> bool:
+  """Report whether the phone selected an external accelerated inference backend."""
+  if not bool(_field(state, "valid", False)) or not bool(_field(state, "connected", False)):
+    return False
+  backend = str(_field(state, "backend", "") or "").strip().lower()
+  return backend in NPU_BADGE_BACKENDS or backend.startswith("qnn-")
 
 
 def phone_ai_status_text(
