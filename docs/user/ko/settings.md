@@ -286,6 +286,8 @@ Carrot Vision에는 `carrot_settings.json` 카탈로그와 별도로 **AR 표시
 
 Android와 모니터 없이 영상 송신부터 결과 수신 및 두 화면용 객체 변환까지 시험하려면 주행 화면이 열린 C3X에서 `python tools/external_ai/mock_phone_ai.py --host 127.0.0.1`을 실행합니다. 이 도구는 C3X 영상을 받아 화면에 표시하지 않고 더미 탐지 결과를 돌려줍니다. `ExternalAIEnabled=1`과 `ExternalAIShowOverlay=1`이 필요하며, `Ctrl-C`로 종료하거나 한 번만 왕복하려면 `--count 1`을 추가합니다. 카메라 영상 없이 이전 결과 수신 경로만 시험하려면 `--results-only --fps 5`를 사용하세요.
 
+실제 스마트폰 시험용 Kotlin 앱은 `tools/android_ai_client/`에 있습니다. 앱에서 C3X IP와 포트, COCO YOLO ONNX 모델, 신뢰도, 목표 추론 FPS를 지정할 수 있습니다. 초기 버전은 ONNX Runtime CPU만 사용하며, QNN/NPU와 GPU 가속은 실제 스마트폰에서 CPU 경로의 정확도·발열·지연을 확인한 뒤 추가합니다. Android 10 이상이 필요하고, 화면이 꺼져도 실행되는 동안 지속 알림이 표시됩니다. 빌드·설치와 지원 모델 형식은 해당 폴더의 `README.md`를 따르세요.
+
 <a id="system"></a>
 ## 시스템
 
