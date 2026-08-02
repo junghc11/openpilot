@@ -12,10 +12,12 @@ This experimental app receives 640×360 JPEG road frames from `phoneaid` on a C3
 
 Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The NNAPI session enables FP16 and NCHW and disables NNAPI CPU. Supported graph partitions may run on the phone's NPU, DSP, or GPU. If the accelerated session cannot be created, the app recreates the whole session on CPU. A direct Qualcomm QNN backend is not bundled yet.
 
-No YOLO model is bundled in the APK. Select it on the **Android app**, not on the C3X, with **YOLO ONNX 모델 선택**. The selected document URI persists across launches. A typical Ultralytics export is:
+No YOLO model is bundled in the APK. **The recommended first-test model is YOLO11n Detection with a 640 input, FP32 ONNX, and no embedded NMS.** Its Nano size minimizes phone load and its conventional COCO output matches the current parser. YOLO11s/m/l/x, YOLOv8, or a compatible custom model may also work but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
+
+Select the model on the **Android app**, not on the C3X, with **YOLO ONNX 모델 선택 (권장: YOLO11n 640)**. The selected document URI persists across launches. Create the recommended model on a PC with the following command, retaining `nms=False` and `dynamic=False`:
 
 ```bash
-yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True
+yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True nms=False dynamic=False batch=1
 ```
 
 Review the model and framework licenses before redistribution.

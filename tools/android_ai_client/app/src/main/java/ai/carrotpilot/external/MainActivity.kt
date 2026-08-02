@@ -147,7 +147,7 @@ class MainActivity : Activity() {
     }
     root.addView(modelLabel)
     root.addView(Button(this).apply {
-      text = "YOLO ONNX 모델 선택"
+      text = "YOLO ONNX 모델 선택 (권장: YOLO11n 640)"
       setOnClickListener { selectModel() }
     }, matchWidth())
     root.addView(Button(this).apply {
@@ -265,7 +265,8 @@ class MainActivity : Activity() {
   }
 
   private fun updateModelLabel() {
-    modelLabel.text = modelUri?.let { "선택 모델: ${it.lastPathSegment ?: it}" } ?: "선택된 모델 없음"
+    modelLabel.text = modelUri?.let { "선택 모델: ${it.lastPathSegment ?: it}" }
+      ?: "선택된 모델 없음 · 첫 시험 권장: yolo11n.onnx (640, FP32, NMS 미포함)"
   }
 
   private fun matchWidth() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)

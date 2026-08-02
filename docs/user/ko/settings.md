@@ -288,7 +288,7 @@ Android와 모니터 없이 영상 송신부터 결과 수신 및 두 화면용 
 
 #### Android 앱 설치 후 연결
 
-실제 스마트폰 시험용 Kotlin 앱은 `tools/android_ai_client/`에 있습니다. Android 10 이상의 64비트 ARM 스마트폰이 필요하며 YOLO ONNX 모델은 APK에 포함되지 않습니다. 모델은 C3X가 아니라 Android 앱의 **YOLO ONNX 모델 선택**에서 지정합니다. 현재 소스에는 기기 종류 제한이 없지만 검증 기준은 C3X이며, C3와 C4는 같은 브랜치의 도로 영상 스트림과 UI가 동작하는지 실기 확인이 필요합니다. 빌드·APK 설치와 지원 모델 형식은 [Android 한글 설치·연결 안내](../../../tools/android_ai_client/README.ko.md)를 따르세요.
+실제 스마트폰 시험용 Kotlin 앱은 `tools/android_ai_client/`에 있습니다. Android 10 이상의 64비트 ARM 스마트폰이 필요하며 YOLO ONNX 모델은 APK에 포함되지 않습니다. 첫 시험은 `YOLO11n Detection`의 640 입력 FP32 ONNX를 권장하며 모델 내 NMS, dynamic 입력, segmentation·pose·classification·OBB·end-to-end 출력은 사용하지 않습니다. 모델은 C3X가 아니라 Android 앱의 **YOLO ONNX 모델 선택 (권장: YOLO11n 640)**에서 지정합니다. 현재 소스에는 기기 종류 제한이 없지만 검증 기준은 C3X이며, C3와 C4는 같은 브랜치의 도로 영상 스트림과 UI가 동작하는지 실기 확인이 필요합니다. 정확한 export 명령과 APK 설치는 [Android 한글 설치·연결 안내](../../../tools/android_ai_client/README.ko.md)를 따르세요.
 
 앱은 스마트폰 핫스팟에서 C3X 주소가 바뀌어도 저장 주소를 먼저 확인한 뒤 같은 사설 IPv4 `/24`의 영상 포트 하나만 검색합니다. TCP 연결 뒤 첫 4바이트가 `CAI1`인 기기만 선택하고 주소를 저장합니다. 자동 연결 설정과 모델이 저장돼 있으면 앱을 열 때 검색 서비스가 시작되며 기기를 찾는 즉시 버튼 없이 YOLO를 시작합니다. 최대 두 개의 로컬 `/24`만 확인하고 인터넷이나 임의 포트 범위는 스캔하지 않습니다. 부팅 자동 시작은 하지 않으므로 스마트폰 재부팅이나 앱 강제 종료 뒤에는 앱을 다시 열어야 합니다.
 

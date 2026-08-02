@@ -12,6 +12,8 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   manifest = (ANDROID_ROOT / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
 
   assert "앱 실행 시 같은 망 자동 검색 및 시작" in activity
+  assert "YOLO ONNX 모델 선택 (권장: YOLO11n 640)" in activity
+  assert "yolo11n.onnx (640, FP32, NMS 미포함)" in activity
   assert "autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive" in activity
   assert "startClient(autoDiscover = true)" in activity
   assert "입력 IP로 시작" in activity
@@ -60,7 +62,9 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   assert "README.ko.md" in index
   assert "README.en.md" in index
   for text in (
-    "Android 앱의 `YOLO ONNX 모델 선택` 버튼",
+    "Android 앱의 `YOLO ONNX 모델 선택 (권장: YOLO11n 640)` 버튼",
+    "첫 시험 권장 모델은 `YOLO11n Detection`",
+    "nms=False dynamic=False batch=1",
     "같은 사설 IPv4 `/24`",
     "Carrot 프레임 서명 `CAI1`",
     "ExternalAIPhoneIP",
@@ -69,7 +73,9 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   ):
     assert text in readme_ko
   for text in (
-    "Select it on the **Android app**",
+    "Select the model on the **Android app**",
+    "recommended first-test model is YOLO11n Detection",
+    "nms=False dynamic=False batch=1",
     "local private IPv4 `/24`",
     "Carrot frame signature `CAI1`",
     "does not open the YOLO model or NPU session",

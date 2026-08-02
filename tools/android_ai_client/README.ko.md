@@ -12,10 +12,12 @@
 
 NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. NNAPI 세션에는 FP16과 NCHW를 허용하고 NNAPI CPU는 제외합니다. 지원되는 그래프는 스마트폰의 NPU·DSP·GPU에 배치될 수 있으며, 가속 세션 생성에 실패하면 전체 세션을 CPU로 다시 엽니다. Qualcomm QNN 직접 백엔드는 아직 포함하지 않습니다.
 
-YOLO 모델은 APK에 포함되지 않습니다. 모델 선택은 C3X가 아니라 **Android 앱의 `YOLO ONNX 모델 선택` 버튼**에서 합니다. 선택한 문서 URI는 다음 실행에도 보존됩니다. 일반적인 Ultralytics 내보내기 예시는 다음과 같습니다.
+YOLO 모델은 APK에 포함되지 않습니다. **첫 시험 권장 모델은 `YOLO11n Detection`, 입력 640, FP32 ONNX, 모델 내 NMS 미포함**입니다. Nano 모델이라 스마트폰 실시간 시험에 부담이 가장 작고 현재 앱의 일반 COCO 출력 파서와 맞습니다. `YOLO11s/m/l/x`, YOLOv8 또는 직접 학습한 호환 모델도 선택할 수 있지만 성능·출력 형식은 별도 검증이 필요합니다. YOLO26 end-to-end, segmentation, pose, classification, OBB 모델은 현재 지원하지 않습니다.
+
+모델 선택은 C3X가 아니라 **Android 앱의 `YOLO ONNX 모델 선택 (권장: YOLO11n 640)` 버튼**에서 합니다. 선택한 문서 URI는 다음 실행에도 보존됩니다. PC에서 권장 모델을 만드는 명령은 다음과 같습니다. `nms=False`와 `dynamic=False`를 유지하세요.
 
 ```bash
-yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True
+yolo export model=yolo11n.pt format=onnx imgsz=640 opset=17 simplify=True nms=False dynamic=False batch=1
 ```
 
 재배포 전 모델과 프레임워크 라이선스를 확인하세요.
