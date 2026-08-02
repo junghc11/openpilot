@@ -31,6 +31,7 @@ class MainActivity : Activity() {
   private lateinit var resultPort: EditText
   private lateinit var threshold: EditText
   private lateinit var inferenceFps: EditText
+  private lateinit var inputSize: EditText
   private lateinit var autoConnect: CheckBox
   private lateinit var downloadModelButton: Button
   private lateinit var deleteModelButton: Button
@@ -150,6 +151,7 @@ class MainActivity : Activity() {
     resultPort = addField(root, "결과 UDP 포트", "7725")
     threshold = addField(root, "신뢰도 임계값 (0.1~0.95)", "0.35")
     inferenceFps = addField(root, "목표 추론 FPS (1~15)", "5")
+    inputSize = addField(root, "YOLO 입력 크기 (320/416/640 · 권장 320)", "320")
 
     modelLabel = TextView(this).apply {
       setTextColor(Color.LTGRAY)
@@ -241,7 +243,7 @@ class MainActivity : Activity() {
       .setTitle("권장 모델 다운로드")
       .setMessage(
         "공식 Ultralytics YOLO11n ONNX ${RecommendedModel.VERSION} 모델을 다운로드합니다.\n\n" +
-          "크기: 10.4 MB\n입력: 1×3×640×640 FP32\n라이선스: AGPL-3.0 또는 Enterprise\n\n" +
+          "크기: 10.4 MB\n입력: 동적 FP32 · 앱 기본 실행 320×320\n라이선스: AGPL-3.0 또는 Enterprise\n\n" +
           "라이선스 조건을 확인하고 개인·오픈소스 실험 범위에 맞게 사용하세요.\n${RecommendedModel.LICENSE_URL}",
       )
       .setNegativeButton("취소", null)
@@ -315,6 +317,7 @@ class MainActivity : Activity() {
         resultPort = resultPort.text.toString().toInt(),
         threshold = threshold.text.toString().toFloat(),
         targetFps = inferenceFps.text.toString().toInt(),
+        inputSize = inputSize.text.toString().toInt(),
         modelUri = uri ?: error("YOLO ONNX 모델을 선택하세요."),
         autoDiscover = autoDiscover,
       ).also { it.validate() }
@@ -331,6 +334,7 @@ class MainActivity : Activity() {
       putExtra(ExternalAIService.EXTRA_RESULT_PORT, config.resultPort)
       putExtra(ExternalAIService.EXTRA_THRESHOLD, config.threshold)
       putExtra(ExternalAIService.EXTRA_TARGET_FPS, config.targetFps)
+      putExtra(ExternalAIService.EXTRA_INPUT_SIZE, config.inputSize)
       putExtra(ExternalAIService.EXTRA_MODEL_URI, config.modelUri.toString())
       putExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, config.autoDiscover)
     }
@@ -343,6 +347,7 @@ class MainActivity : Activity() {
     resultPort.setText(preferences.getInt(KEY_RESULT_PORT, 7725).toString())
     threshold.setText(preferences.getFloat(KEY_THRESHOLD, 0.35f).toString())
     inferenceFps.setText(preferences.getInt(KEY_TARGET_FPS, 5).toString())
+    inputSize.setText(preferences.getInt(KEY_INPUT_SIZE, 320).toString())
     autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
     val storedUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
     modelUri = when {
@@ -361,6 +366,7 @@ class MainActivity : Activity() {
       .putInt(KEY_RESULT_PORT, config.resultPort)
       .putFloat(KEY_THRESHOLD, config.threshold)
       .putInt(KEY_TARGET_FPS, config.targetFps)
+      .putInt(KEY_INPUT_SIZE, config.inputSize)
       .putString(KEY_MODEL_URI, config.modelUri.toString())
       .apply()
   }
@@ -372,12 +378,12 @@ class MainActivity : Activity() {
         "권장 모델 준비됨: ${RecommendedModel.DISPLAY_NAME}\nSHA-256 검증 버전: ${RecommendedModel.VERSION}"
       modelUri != null -> "사용자 선택 모델: ${modelUri?.lastPathSegment ?: modelUri}"
       installed -> "권장 모델 설치됨 · 사용하려면 권장 모델 버튼을 누르세요."
-      else -> "선택된 모델 없음 · 권장: YOLO11n 640 FP32"
+      else -> "선택된 모델 없음 · 권장: YOLO11n 동적 FP32 · 기본 실행 320"
     }
     downloadModelButton.text = when {
       downloadingModel -> "권장 모델 다운로드 중"
       installed -> "권장 모델 다시 다운로드"
-      else -> "권장 모델 다운로드 (YOLO11n 640 · 10.4 MB)"
+      else -> "권장 모델 다운로드 (YOLO11n 동적 · 10.4 MB)"
     }
     downloadModelButton.isEnabled = !downloadingModel
     deleteModelButton.isEnabled = installed && !downloadingModel
@@ -396,6 +402,7 @@ class MainActivity : Activity() {
     private const val KEY_RESULT_PORT = "result_port"
     private const val KEY_THRESHOLD = "threshold"
     private const val KEY_TARGET_FPS = "target_fps"
+    private const val KEY_INPUT_SIZE = "input_size"
     private const val KEY_MODEL_URI = "model_uri"
     private const val KEY_AUTO_CONNECT = "auto_connect"
     private const val REQUEST_MODEL = 10
@@ -409,6 +416,7 @@ data class ClientConfig(
   val resultPort: Int,
   val threshold: Float,
   val targetFps: Int,
+  val inputSize: Int,
   val modelUri: Uri,
   val autoDiscover: Boolean,
 ) {
@@ -418,5 +426,6 @@ data class ClientConfig(
     require(resultPort in 1..65535) { "결과 포트는 1~65535 범위여야 합니다." }
     require(threshold in 0.1f..0.95f) { "신뢰도는 0.1~0.95 범위여야 합니다." }
     require(targetFps in 1..15) { "추론 FPS는 1~15 범위여야 합니다." }
+    require(inputSize in YoloDetector.SUPPORTED_INPUT_SIZES) { "YOLO 입력 크기는 320, 416, 640 중 하나여야 합니다." }
   }
 }

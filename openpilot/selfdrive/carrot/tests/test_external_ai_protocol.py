@@ -22,6 +22,13 @@ def valid_result(**changes) -> dict:
     "inference_end_timestamp_ns": 5_045_000_000,
     "model": "yolo11n-int8",
     "backend": "qnn",
+    "decode_ms": 3.0,
+    "preprocess_ms": 5.0,
+    "runtime_ms": 24.0,
+    "postprocess_ms": 6.0,
+    "phone_total_ms": 41.0,
+    "input_width": 320,
+    "input_height": 320,
     "objects": [{
       "class_id": 2,
       "class_name": "car",
@@ -46,6 +53,10 @@ def test_valid_result_is_parsed_with_measured_timing() -> None:
   assert result.frame_id == 42
   assert result.latency_ms == pytest.approx(120.0)
   assert result.inference_ms == pytest.approx(35.0)
+  assert result.decode_ms == pytest.approx(3.0)
+  assert result.runtime_ms == pytest.approx(24.0)
+  assert result.phone_total_ms == pytest.approx(41.0)
+  assert (result.input_width, result.input_height) == (320, 320)
   assert result.objects[0].class_name == "car"
   assert result.objects[0].center_x == pytest.approx(0.45)
 
@@ -122,6 +133,20 @@ def test_phone_timestamp_order_is_checked_without_comparing_phone_and_c3x_clocks
 
   with pytest.raises(ExternalAIProtocolError, match="out of order"):
     parse_external_ai_result(encode(result), now_monotonic_ns=NOW_NS)
+
+
+def test_optional_performance_metrics_remain_compatible_and_are_bounded() -> None:
+  legacy = valid_result()
+  for field in ("decode_ms", "preprocess_ms", "runtime_ms", "postprocess_ms", "phone_total_ms", "input_width", "input_height"):
+    legacy.pop(field)
+  parsed = parse_external_ai_result(encode(legacy), now_monotonic_ns=NOW_NS)
+  assert parsed.runtime_ms == 0.0
+  assert parsed.input_width == 0
+
+  with pytest.raises(ExternalAIProtocolError, match="runtime_ms"):
+    parse_external_ai_result(encode(valid_result(runtime_ms=60_001.0)), now_monotonic_ns=NOW_NS)
+  with pytest.raises(ExternalAIProtocolError, match="provided together"):
+    parse_external_ai_result(encode(valid_result(input_height=None)), now_monotonic_ns=NOW_NS)
 
 
 def test_tracker_reports_disconnect_and_hides_stale_result() -> None:

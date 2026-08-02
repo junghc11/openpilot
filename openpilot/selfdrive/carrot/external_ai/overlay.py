@@ -78,11 +78,23 @@ def phone_ai_status_text(
     latency_ms = 0.0
   if not math.isfinite(latency_ms) or latency_ms < 0.0:
     latency_ms = 0.0
+  try:
+    inference_ms = float(_field(state, "inferenceMs", 0.0))
+  except (TypeError, ValueError):
+    inference_ms = 0.0
+  if not math.isfinite(inference_ms) or inference_ms < 0.0:
+    inference_ms = 0.0
+  try:
+    input_width = int(_field(state, "inputWidth", 0))
+  except (TypeError, ValueError):
+    input_width = 0
   objects = _field(state, "objects", ()) or ()
   try:
     object_count = len(objects)
   except TypeError:
     object_count = 0
+  if input_width > 0 and inference_ms > 0.0:
+    return f"외부 AI · {backend} · {input_width} · 총{latency_ms:.0f}/AI{inference_ms:.0f}ms · {object_count}개", True
   return f"외부 AI · {backend} · {latency_ms:.0f}ms · {object_count}개", True
 
 

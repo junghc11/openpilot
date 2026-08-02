@@ -69,6 +69,13 @@ class ExternalAIResult:
   c3x_receive_timestamp_ns: int
   latency_ms: float
   inference_ms: float
+  decode_ms: float
+  preprocess_ms: float
+  runtime_ms: float
+  postprocess_ms: float
+  phone_total_ms: float
+  input_width: int
+  input_height: int
 
 
 def _mapping(value: object, field: str) -> dict:
@@ -89,6 +96,21 @@ def _number(value: object, field: str, *, minimum: float, maximum: float) -> flo
   parsed = float(value)
   if not math.isfinite(parsed) or parsed < minimum or parsed > maximum:
     raise ExternalAIProtocolError(f"{field} must be between {minimum} and {maximum}")
+  return parsed
+
+
+def _optional_number(root: dict, field: str, *, minimum: float, maximum: float, default: float = 0.0) -> float:
+  value = root.get(field)
+  return default if value is None else _number(value, field, minimum=minimum, maximum=maximum)
+
+
+def _optional_integer(root: dict, field: str, *, minimum: int, maximum: int, default: int = 0) -> int:
+  value = root.get(field)
+  if value is None:
+    return default
+  parsed = _integer(value, field, minimum=minimum)
+  if parsed > maximum:
+    raise ExternalAIProtocolError(f"{field} must be <= {maximum}")
   return parsed
 
 
@@ -183,6 +205,16 @@ def parse_external_ai_result(
     raise ExternalAIProtocolError("result exceeded maximum object count")
   objects = tuple(_parse_object(value, index) for index, value in enumerate(object_values))
 
+  decode_ms = _optional_number(root, "decode_ms", minimum=0.0, maximum=60_000.0)
+  preprocess_ms = _optional_number(root, "preprocess_ms", minimum=0.0, maximum=60_000.0)
+  runtime_ms = _optional_number(root, "runtime_ms", minimum=0.0, maximum=60_000.0)
+  postprocess_ms = _optional_number(root, "postprocess_ms", minimum=0.0, maximum=60_000.0)
+  phone_total_ms = _optional_number(root, "phone_total_ms", minimum=0.0, maximum=60_000.0)
+  input_width = _optional_integer(root, "input_width", minimum=32, maximum=8192)
+  input_height = _optional_integer(root, "input_height", minimum=32, maximum=8192)
+  if (input_width == 0) != (input_height == 0):
+    raise ExternalAIProtocolError("input_width and input_height must be provided together")
+
   return ExternalAIResult(
     protocol_version=protocol_version,
     frame_id=frame_id,
@@ -196,6 +228,13 @@ def parse_external_ai_result(
     c3x_receive_timestamp_ns=now_ns,
     latency_ms=latency_ms,
     inference_ms=(inference_end_ns - inference_start_ns) / 1_000_000.0,
+    decode_ms=decode_ms,
+    preprocess_ms=preprocess_ms,
+    runtime_ms=runtime_ms,
+    postprocess_ms=postprocess_ms,
+    phone_total_ms=phone_total_ms,
+    input_width=input_width,
+    input_height=input_height,
   )
 
 

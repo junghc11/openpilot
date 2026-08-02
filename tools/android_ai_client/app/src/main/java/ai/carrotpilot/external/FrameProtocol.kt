@@ -65,12 +65,13 @@ object FrameProtocol {
     frame: C3XFrame,
     inferenceStartNs: Long,
     inferenceEndNs: Long,
-    detections: List<Detection>,
+    detectionResult: DetectionResult,
+    performance: FramePerformance,
     modelName: String,
     backend: String,
   ) {
     val objects = JSONArray()
-    detections.forEach { detection ->
+    detectionResult.detections.forEach { detection ->
       objects.put(JSONObject().apply {
         put("class_id", detection.classId)
         put("class_name", detection.className)
@@ -90,6 +91,13 @@ object FrameProtocol {
       put("inference_end_timestamp_ns", inferenceEndNs)
       put("model", modelName.take(64))
       put("backend", backend.take(64))
+      put("decode_ms", performance.decodeMs)
+      put("preprocess_ms", performance.preprocessMs)
+      put("runtime_ms", performance.runtimeMs)
+      put("postprocess_ms", performance.postprocessMs)
+      put("phone_total_ms", performance.phoneTotalMs)
+      put("input_width", detectionResult.inputWidth)
+      put("input_height", detectionResult.inputHeight)
       put("objects", objects)
     }.toString().toByteArray(StandardCharsets.UTF_8)
     require(json.size <= 65_507) { "탐지 결과 UDP 패킷이 너무 큽니다." }

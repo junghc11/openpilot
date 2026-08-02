@@ -9,7 +9,6 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
@@ -98,7 +97,7 @@ class ExternalAIService : Service() {
 
         val activeDetector = detector ?: try {
           updateStatus("기기 발견: $targetHost\nYOLO 모델 준비 중", targetHost)
-          YoloDetector(copyModelToCache(config.modelUri), config.threshold).also { detector = it }
+          YoloDetector(copyModelToCache(config.modelUri), config.threshold, config.inputSize).also { detector = it }
         } catch (error: Exception) {
           updateStatus("YOLO 모델 열기 실패\n${error.message}")
           token.set(false)
@@ -164,54 +163,62 @@ class ExternalAIService : Service() {
     var receivedCount = 0
     var inferenceCount = 0
     var statusWindowStartNs = SystemClock.elapsedRealtimeNanos()
-    var averageInferenceMs = 0.0
+    val performanceStats = RollingPerformanceStats()
     var lastObjects = 0
-    while (token.get()) {
-      val frame = FrameProtocol.readFrame(input)
-      receivedCount++
-      val nowNs = SystemClock.elapsedRealtimeNanos()
-      if (nowNs - lastInferenceStartNs < targetIntervalNs) continue
-      val bitmap = BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.size)
-        ?: error("수신 JPEG 디코딩 실패")
-      val inferenceStartNs = SystemClock.elapsedRealtimeNanos()
-      val detections = try {
-        detector.detect(bitmap)
-      } finally {
-        bitmap.recycle()
-      }
-      val inferenceEndNs = SystemClock.elapsedRealtimeNanos()
-      lastInferenceStartNs = inferenceStartNs
-      val inferenceMs = (inferenceEndNs - inferenceStartNs) / 1_000_000.0
-      averageInferenceMs = if (inferenceCount == 0) inferenceMs else averageInferenceMs * 0.9 + inferenceMs * 0.1
-      inferenceCount++
-      lastObjects = detections.size
-      FrameProtocol.sendResult(
-        resultSocket,
-        resultAddress,
-        config.resultPort,
-        frame,
-        inferenceStartNs,
-        inferenceEndNs,
-        detections,
-        modelName,
-        detector.backend,
-      )
+    ReusableJpegDecoder().use { jpegDecoder ->
+      while (token.get()) {
+        val frame = FrameProtocol.readFrame(input)
+        receivedCount++
+        val nowNs = SystemClock.elapsedRealtimeNanos()
+        if (nowNs - lastInferenceStartNs < targetIntervalNs) continue
+        val decodeStartNs = SystemClock.elapsedRealtimeNanos()
+        val bitmap = jpegDecoder.decode(frame.jpeg)
+        val decodeEndNs = SystemClock.elapsedRealtimeNanos()
+        val inferenceStartNs = decodeEndNs
+        val detectionResult = detector.detect(bitmap)
+        val inferenceEndNs = SystemClock.elapsedRealtimeNanos()
+        lastInferenceStartNs = inferenceStartNs
+        val performance = FramePerformance(
+          decodeMs = nanosToMillis(decodeEndNs - decodeStartNs),
+          preprocessMs = detectionResult.preprocessMs,
+          runtimeMs = detectionResult.runtimeMs,
+          postprocessMs = detectionResult.postprocessMs,
+          phoneTotalMs = nanosToMillis(inferenceEndNs - frame.phoneReceiveTimestampNs),
+        )
+        performanceStats.add(performance)
+        inferenceCount++
+        lastObjects = detectionResult.detections.size
+        FrameProtocol.sendResult(
+          resultSocket,
+          resultAddress,
+          config.resultPort,
+          frame,
+          inferenceStartNs,
+          inferenceEndNs,
+          detectionResult,
+          performance,
+          modelName,
+          detector.backend,
+        )
 
-      val windowNs = inferenceEndNs - statusWindowStartNs
-      if (windowNs >= 1_000_000_000L) {
-        val seconds = windowNs / 1_000_000_000.0
-        updateStatus(buildStatus(
-          config = config,
-          targetHost = targetHost,
-          receiveFps = receivedCount / seconds,
-          inferenceFps = inferenceCount / seconds,
-          averageInferenceMs = averageInferenceMs,
-          objectCount = lastObjects,
-          backendLabel = detector.backendLabel,
-        ))
-        receivedCount = 0
-        inferenceCount = 0
-        statusWindowStartNs = inferenceEndNs
+        val windowNs = inferenceEndNs - statusWindowStartNs
+        if (windowNs >= 1_000_000_000L) {
+          val seconds = windowNs / 1_000_000_000.0
+          updateStatus(buildStatus(
+            config = config,
+            targetHost = targetHost,
+            receiveFps = receivedCount / seconds,
+            inferenceFps = inferenceCount / seconds,
+            performance = performanceStats.summary(),
+            inputWidth = detector.inputWidth,
+            inputHeight = detector.inputHeight,
+            objectCount = lastObjects,
+            backendLabel = detector.backendLabel,
+          ))
+          receivedCount = 0
+          inferenceCount = 0
+          statusWindowStartNs = inferenceEndNs
+        }
       }
     }
   }
@@ -221,7 +228,9 @@ class ExternalAIService : Service() {
     targetHost: String,
     receiveFps: Double,
     inferenceFps: Double,
-    averageInferenceMs: Double,
+    performance: PerformanceSummary,
+    inputWidth: Int,
+    inputHeight: Int,
     objectCount: Int,
     backendLabel: String,
   ): String {
@@ -229,11 +238,26 @@ class ExternalAIService : Service() {
     val batteryTemp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
     val thermalStatus = getSystemService(PowerManager::class.java).currentThermalStatus
     return "연결됨: $targetHost:${config.framePort}\n" +
-      "수신 ${"%.1f".format(receiveFps)} FPS · 추론 ${"%.1f".format(inferenceFps)} FPS\n" +
-      "평균 추론 ${"%.1f".format(averageInferenceMs)} ms · 객체 ${objectCount}개\n" +
+      "입력 ${inputWidth}×${inputHeight} · 수신 ${"%.1f".format(receiveFps)} · 처리 ${"%.1f".format(inferenceFps)} FPS\n" +
+      "폰 처리 평균 ${"%.1f".format(performance.averagePhoneTotalMs)} · p95 ${"%.1f".format(performance.p95PhoneTotalMs)} ms\n" +
+      "JPEG ${"%.1f".format(performance.averageDecodeMs)} · 전처리 ${"%.1f".format(performance.averagePreprocessMs)} · ORT ${"%.1f".format(performance.averageRuntimeMs)} · 후처리 ${"%.1f".format(performance.averagePostprocessMs)} ms\n" +
+      "객체 ${objectCount}개 · 표본 ${performance.samples}개\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
-      "열 상태 $thermalStatus · 왕복 지연은 기기에서 측정"
+      "열 상태 ${thermalStatusLabel(thermalStatus)}($thermalStatus) · 총 지연은 C3X에서 측정"
   }
+
+  private fun thermalStatusLabel(status: Int): String = when (status) {
+    PowerManager.THERMAL_STATUS_NONE -> "정상"
+    PowerManager.THERMAL_STATUS_LIGHT -> "약간 뜨거움"
+    PowerManager.THERMAL_STATUS_MODERATE -> "성능 저하 가능"
+    PowerManager.THERMAL_STATUS_SEVERE -> "성능 제한"
+    PowerManager.THERMAL_STATUS_CRITICAL -> "위험"
+    PowerManager.THERMAL_STATUS_EMERGENCY -> "긴급"
+    PowerManager.THERMAL_STATUS_SHUTDOWN -> "종료 임박"
+    else -> "알 수 없음"
+  }
+
+  private fun nanosToMillis(nanos: Long): Double = nanos / 1_000_000.0
 
   private fun copyModelToCache(uri: Uri): File {
     val modelFile = File(cacheDir, "selected-yolo.onnx")
@@ -348,6 +372,7 @@ class ExternalAIService : Service() {
     const val EXTRA_RESULT_PORT = "result_port"
     const val EXTRA_THRESHOLD = "threshold"
     const val EXTRA_TARGET_FPS = "target_fps"
+    const val EXTRA_INPUT_SIZE = "input_size"
     const val EXTRA_MODEL_URI = "model_uri"
     const val EXTRA_AUTO_DISCOVER = "auto_discover"
     const val EXTRA_STATUS = "status"
@@ -374,6 +399,7 @@ private data class ServiceConfig(
   val resultPort: Int,
   val threshold: Float,
   val targetFps: Int,
+  val inputSize: Int,
   val modelUri: Uri,
   val autoDiscover: Boolean,
 ) {
@@ -384,6 +410,9 @@ private data class ServiceConfig(
       resultPort = intent.getIntExtra(ExternalAIService.EXTRA_RESULT_PORT, 7725),
       threshold = intent.getFloatExtra(ExternalAIService.EXTRA_THRESHOLD, 0.35f),
       targetFps = max(1, intent.getIntExtra(ExternalAIService.EXTRA_TARGET_FPS, 5)),
+      inputSize = intent.getIntExtra(ExternalAIService.EXTRA_INPUT_SIZE, 320).also {
+        require(it in YoloDetector.SUPPORTED_INPUT_SIZES) { "YOLO 입력 크기는 320, 416, 640 중 하나여야 합니다." }
+      },
       modelUri = Uri.parse(requireNotNull(intent.getStringExtra(ExternalAIService.EXTRA_MODEL_URI))),
       autoDiscover = intent.getBooleanExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, true),
     )

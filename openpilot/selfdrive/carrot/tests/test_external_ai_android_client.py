@@ -12,7 +12,8 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   manifest = (ANDROID_ROOT / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
 
   assert "앱 실행 시 같은 망 자동 검색 및 시작" in activity
-  assert "권장 모델 다운로드 (YOLO11n 640 · 10.4 MB)" in activity
+  assert "권장 모델 다운로드 (YOLO11n 동적 · 10.4 MB)" in activity
+  assert "YOLO 입력 크기 (320/416/640 · 권장 320)" in activity
   assert "다른 ONNX 파일 선택" in activity
   assert "권장 모델 삭제" in activity
   assert "동의 후 다운로드" in activity
@@ -23,6 +24,35 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   assert "EXTRA_AUTO_DISCOVER" in activity
   assert "DeviceDiscovery.findHost(config.framePort, config.host)" in service
   assert "RECEIVE_BOOT_COMPLETED" not in manifest
+
+
+def test_android_client_uses_dynamic_low_resolution_and_stage_metrics() -> None:
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+  detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
+  protocol = (JAVA_ROOT / "FrameProtocol.kt").read_text(encoding="utf-8")
+  stats = (JAVA_ROOT / "PerformanceStats.kt").read_text(encoding="utf-8")
+  decoder = (JAVA_ROOT / "ReusableJpegDecoder.kt").read_text(encoding="utf-8")
+
+  assert "SUPPORTED_INPUT_SIZES = setOf(320, 416, 640)" in detector
+  assert "?: dynamicInputSize" in detector
+  assert "KEY_INPUT_SIZE, 320" in activity
+  assert "EXTRA_INPUT_SIZE" in activity
+  assert "NNAPIFlags.USE_FP16" in detector
+  assert "NNAPIFlags.USE_NCHW" not in detector
+  assert "preprocessMs" in detector
+  assert "runtimeMs" in detector
+  assert "postprocessMs" in detector
+  assert "RollingPerformanceStats()" in service
+  assert "p95PhoneTotalMs" in service
+  assert "thermalStatusLabel" in service
+  for field in ("decode_ms", "preprocess_ms", "runtime_ms", "postprocess_ms", "phone_total_ms", "input_width", "input_height"):
+    assert f'put("{field}"' in protocol
+  assert "capacity: Int = 120" in stats
+  assert "percentile95" in stats
+  assert "inBitmap = previous" in decoder
+  assert "private val letterboxBitmap" in detector
+  assert "private val pixels = IntArray" in detector
 
 
 def test_android_recommended_model_download_is_pinned_and_validated() -> None:
@@ -94,7 +124,10 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   assert "README.en.md" in index
   for text in (
     "앱의 **권장 모델 다운로드**",
-    "첫 시험 권장 모델은 `YOLO11n Detection`",
+    "첫 시험 권장 모델은 동적 입력 `YOLO11n Detection`",
+    "기본 320은 성능 우선",
+    "전화 처리 평균과 p95",
+    "NCHW 강제 옵션",
     "공식 `ultralytics/assets` v8.4.0 Release",
     "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
     "AGPL-3.0 또는 Enterprise",
@@ -108,7 +141,10 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     assert text in readme_ko
   for text in (
     "Press **권장 모델 다운로드**",
-    "recommended first-test model is YOLO11n Detection",
+    "recommended first-test model is dynamic-input YOLO11n Detection",
+    "Use 320 for performance-first testing",
+    "average and p95 phone time",
+    "does not force the potentially slower NCHW option",
     "official `ultralytics/assets` v8.4.0 Release",
     "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
     "AGPL-3.0 or Enterprise",

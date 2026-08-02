@@ -22,6 +22,13 @@ def parsed_result():
     "inference_end_timestamp_ns": 2_040_000_000,
     "model": "yolo11n",
     "backend": "mock",
+    "decode_ms": 2.0,
+    "preprocess_ms": 4.0,
+    "runtime_ms": 18.0,
+    "postprocess_ms": 3.0,
+    "phone_total_ms": 30.0,
+    "input_width": 320,
+    "input_height": 320,
     "objects": [{
       "class_id": 5,
       "class_name": "bus",
@@ -44,6 +51,9 @@ def test_phone_ai_payload_contains_fresh_detection_and_health() -> None:
   assert payload["connected"] is True
   assert payload["frameId"] == 9
   assert payload["latencyMs"] == 80.0
+  assert payload["runtimeMs"] == 18.0
+  assert payload["phoneTotalMs"] == 30.0
+  assert payload["inputWidth"] == 320
   assert payload["objects"] == [{
     "classId": 5,
     "className": "bus",

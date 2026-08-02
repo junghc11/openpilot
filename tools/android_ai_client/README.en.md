@@ -6,15 +6,15 @@ This experimental app receives 640×360 JPEG road frames from `phoneaid` on a C3
 
 - A 64-bit ARM (`arm64-v8a`) phone with Android 10 (API 29) or newer
 - ONNX Runtime Android with NNAPI first and automatic CPU fallback
-- Float32 NCHW input shaped `[1, 3, H, W]`; dynamic H/W defaults to 640
+- Float32 NCHW input shaped `[1, 3, H, W]`; dynamic H/W selects 320, 416, or 640 and defaults to 320
 - Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The NNAPI session enables FP16 and NCHW and disables NNAPI CPU. Supported graph partitions may run on the phone's NPU, DSP, or GPU. If the accelerated session cannot be created, the app recreates the whole session on CPU. A direct Qualcomm QNN backend is not bundled yet.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. Supported graph partitions may run on the phone's NPU, DSP, or GPU while unsupported work may still run through ONNX Runtime CPU kernels. If the accelerated session cannot be created, the app recreates the whole session on CPU. A direct Qualcomm QNN backend is not bundled yet.
 
-No YOLO model is bundled in the APK. **The recommended first-test model is YOLO11n Detection running at 640, FP32 ONNX, with no embedded NMS.** Its Nano size minimizes phone load and its conventional COCO output matches the current parser. Both static `[1,3,640,640]` and dynamic `[-1,3,-1,-1]` inputs are accepted; the app executes at 640×640. YOLO11s/m/l/x, YOLOv8, or a compatible custom model may also work but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
+No YOLO model is bundled in the APK. **The recommended first-test model is dynamic-input YOLO11n Detection, FP32 ONNX, with no embedded NMS.** Use 320 for performance-first testing, 416 for balance, and 640 only to compare small-object quality. A 320 input has one quarter of the pixels of 640, so establish sustained performance and heat at 320 first. A static model always uses its own fixed input regardless of the app selection. YOLO11s/m/l/x, YOLOv8, or a compatible custom model may also work but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
 
-Press **권장 모델 다운로드** and review the Ultralytics model-license notice. The app downloads `yolo11n.onnx` directly from the official `ultralytics/assets` v8.4.0 Release. It pins the `10,930,182`-byte size and SHA-256 `634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b`, then verifies an FP32 input compatible with a 640 execution and a conventional COCO YOLO output before moving the model into internal app storage. The official file metadata is dynamic `[-1,3,-1,-1] → [-1,84,-1]`; an app inference resolves it to `[1,3,640,640] → [1,84,N]`. A failed or cancelled download removes its temporary file, and only a successful download becomes active. Uninstalling the app removes the internal model.
+Press **권장 모델 다운로드** and review the Ultralytics model-license notice. The app downloads `yolo11n.onnx` directly from the official `ultralytics/assets` v8.4.0 Release. It pins the `10,930,182`-byte size and SHA-256 `634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b`, then verifies a dynamic FP32 input and conventional COCO YOLO output before moving the model into internal app storage. The official file metadata is `[-1,3,-1,-1] → [-1,84,-1]`; execution resolves it to the selected 320, 416, or 640 input. A failed or cancelled download removes its temporary file, and only a successful download becomes active. Uninstalling the app removes the internal model.
 
 Use **다른 ONNX 파일 선택** when offline or when testing another compatible model. To create the recommended format on a PC, retain `nms=False` and `dynamic=False`:
 
@@ -55,6 +55,15 @@ You do not need to find the device address manually when a phone hotspot assigns
 Discovery is bounded to at most two local private `/24` networks. It does not scan the internet or a range of ports. If the frame port is changed, enter the same port in the app; discovery then verifies `CAI1` on that port. Discovery may fail on a VPN, guest Wi-Fi, or a network with AP isolation.
 
 For a manual fallback, enter the current C3/C3X/C4 address under **기기 IP** and press **입력 IP로 시작**. When automatic connection is enabled and a model has been saved, opening the app starts discovery without another button press. It does not start at boot; reopen it after a phone reboot or force-stop.
+
+## Performance measurement
+
+The app's **YOLO input size** defaults to 320. Run 320 at 5 FPS for at least 15 minutes before raising it to 416 or 640. The status view separates the rolling 120-sample average and p95 phone time, JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. `eNPU` means that NNAPI acceleration was requested successfully; it does not prove that every operation ran on a physical NPU.
+
+- A large `ORT` value indicates a model or acceleration-backend bottleneck; stay at 320 and check for CPU fallback.
+- A large `total latency - phone time` indicates C3X JPEG generation, Wi-Fi, or return-path delay.
+- p95 rising far above the average, or a `performance limited` thermal state, indicates likely thermal throttling.
+- If sustained performance is insufficient at 320, do not raise the input or select a larger model.
 
 ## Screen-off and power behavior
 

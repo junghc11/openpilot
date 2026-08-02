@@ -120,10 +120,12 @@ def test_c3x_overlay_status_reports_connection_backend_and_latency() -> None:
     connected=True,
     backend="onnxruntime-nnapi",
     latencyMs=84.4,
+    inferenceMs=35.2,
+    inputWidth=320,
     objects=(object(), object(), object()),
   )
   connected, is_connected = phone_ai_status_text(state, service_alive=True, service_valid=True)
-  assert connected == "외부 AI · NNAPI · 84ms · 3개"
+  assert connected == "외부 AI · NNAPI · 320 · 총84/AI35ms · 3개"
   assert is_connected
 
 

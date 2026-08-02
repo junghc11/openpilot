@@ -18,6 +18,13 @@ def build_phone_ai_payload(
     "receiveTimestampMonotonicNanos": result.c3x_receive_timestamp_ns if valid else 0,
     "latencyMs": result.latency_ms if valid else 0.0,
     "inferenceMs": result.inference_ms if valid else 0.0,
+    "decodeMs": result.decode_ms if valid else 0.0,
+    "preprocessMs": result.preprocess_ms if valid else 0.0,
+    "runtimeMs": result.runtime_ms if valid else 0.0,
+    "postprocessMs": result.postprocess_ms if valid else 0.0,
+    "phoneTotalMs": result.phone_total_ms if valid else 0.0,
+    "inputWidth": result.input_width if valid else 0,
+    "inputHeight": result.input_height if valid else 0,
     "modelName": result.model if valid else "",
     "backend": result.backend if valid else "",
     "objects": [

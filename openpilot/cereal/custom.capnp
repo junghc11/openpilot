@@ -242,6 +242,13 @@ struct PhoneAIState @0xda96579883444c35 {
 	rejectedSenders @13 :UInt32;
 	lastSenderIp @14 :Text;
 	lastError @15 :Text;
+	decodeMs @16 :Float32;
+	preprocessMs @17 :Float32;
+	runtimeMs @18 :Float32;
+	postprocessMs @19 :Float32;
+	phoneTotalMs @20 :Float32;
+	inputWidth @21 :UInt16;
+	inputHeight @22 :UInt16;
 }
 
 struct CustomReserved4 @0x80ae746ee2596b11 {

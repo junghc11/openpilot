@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.os.SystemClock
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OrtEnvironment
@@ -19,7 +20,28 @@ import java.util.EnumSet
 import kotlin.math.max
 import kotlin.math.min
 
-class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Closeable {
+data class DetectionResult(
+  val detections: List<Detection>,
+  val preprocessMs: Double,
+  val runtimeMs: Double,
+  val postprocessMs: Double,
+  val inputWidth: Int,
+  val inputHeight: Int,
+) {
+  val aiPipelineMs: Double
+    get() = preprocessMs + runtimeMs + postprocessMs
+}
+
+class YoloDetector(
+  modelFile: File,
+  private val confidenceThreshold: Float,
+  requestedInputSize: Int,
+) : Closeable {
+  private val dynamicInputSize = requestedInputSize.also {
+    require(it in SUPPORTED_INPUT_SIZES) {
+      "YOLO 입력 크기는 ${SUPPORTED_INPUT_SIZES.joinToString()} 중 하나여야 합니다."
+    }
+  }
   private val environment = OrtEnvironment.getEnvironment()
   private val sessionSetup = createPreferredSession(modelFile)
   private val options = sessionSetup.options
@@ -29,11 +51,14 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
   private val inputName = session.inputNames.first()
   private val inputShape = (session.inputInfo[inputName]?.info as? TensorInfo)?.shape
     ?: error("YOLO 입력 텐서 정보를 읽을 수 없습니다.")
-  private val inputHeight = inputShape.getOrNull(2)?.takeIf { it > 0 }?.toInt() ?: 640
-  private val inputWidth = inputShape.getOrNull(3)?.takeIf { it > 0 }?.toInt() ?: 640
+  val inputHeight = inputShape.getOrNull(2)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
+  val inputWidth = inputShape.getOrNull(3)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
   private val inputBuffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3 * Float.SIZE_BYTES)
     .order(ByteOrder.nativeOrder())
     .asFloatBuffer()
+  private val letterboxBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
+  private val letterboxCanvas = Canvas(letterboxBitmap)
+  private val pixels = IntArray(inputWidth * inputHeight)
 
   init {
     require(inputShape.size == 4 && (inputShape[1] == 3L || inputShape[1] == -1L)) {
@@ -41,16 +66,29 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
     }
   }
 
-  fun detect(source: Bitmap): List<Detection> {
+  fun detect(source: Bitmap): DetectionResult {
+    val preprocessStartNs = SystemClock.elapsedRealtimeNanos()
     val prepared = preprocess(source)
+    val preprocessEndNs = SystemClock.elapsedRealtimeNanos()
+    val runtimeStartNs = preprocessEndNs
     OnnxTensor.createTensor(
       environment,
       prepared.tensor,
       longArrayOf(1, 3, inputHeight.toLong(), inputWidth.toLong()),
     ).use { input ->
       session.run(mapOf(inputName to input)).use { result ->
+        val runtimeEndNs = SystemClock.elapsedRealtimeNanos()
         val output = result[0] as? OnnxTensor ?: error("첫 YOLO 출력이 텐서가 아닙니다.")
-        return parseOutput(output, prepared)
+        val detections = parseOutput(output, prepared)
+        val postprocessEndNs = SystemClock.elapsedRealtimeNanos()
+        return DetectionResult(
+          detections = detections,
+          preprocessMs = nanosToMillis(preprocessEndNs - preprocessStartNs),
+          runtimeMs = nanosToMillis(runtimeEndNs - runtimeStartNs),
+          postprocessMs = nanosToMillis(postprocessEndNs - runtimeEndNs),
+          inputWidth = inputWidth,
+          inputHeight = inputHeight,
+        )
       }
     }
   }
@@ -61,8 +99,7 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
     val scaledHeight = max(1, (source.height * scale).toInt())
     val padX = (inputWidth - scaledWidth) / 2f
     val padY = (inputHeight - scaledHeight) / 2f
-    val letterboxed = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
-    Canvas(letterboxed).apply {
+    letterboxCanvas.apply {
       drawColor(Color.rgb(114, 114, 114))
       drawBitmap(
         source,
@@ -71,9 +108,7 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
         null,
       )
     }
-    val pixels = IntArray(inputWidth * inputHeight)
-    letterboxed.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-    letterboxed.recycle()
+    letterboxBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
     val planeSize = inputWidth * inputHeight
     val tensor = inputBuffer.apply { clear() }
     pixels.forEachIndexed { index, pixel ->
@@ -152,6 +187,7 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
   }
 
   override fun close() {
+    letterboxBitmap.recycle()
     session.close()
     options.close()
   }
@@ -162,13 +198,12 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
       nnapiOptions.addNnapi(EnumSet.of(
         NNAPIFlags.CPU_DISABLED,
         NNAPIFlags.USE_FP16,
-        NNAPIFlags.USE_NCHW,
       ))
       return SessionSetup(
         options = nnapiOptions,
         session = environment.createSession(modelFile.absolutePath, nnapiOptions),
         backend = "onnxruntime-nnapi",
-        backendLabel = "NNAPI 우선(NPU/DSP/GPU · 미지원 연산 CPU)",
+        backendLabel = "NNAPI 가속 요청(NPU/DSP/GPU · 혼합 실행 가능)",
       )
     } catch (nnapiError: Exception) {
       nnapiOptions.close()
@@ -209,6 +244,10 @@ class YoloDetector(modelFile: File, private val confidenceThreshold: Float) : Cl
   )
 
   companion object {
+    val SUPPORTED_INPUT_SIZES = setOf(320, 416, 640)
+
+    private fun nanosToMillis(nanos: Long): Double = nanos / 1_000_000.0
+
     fun validateModelFile(modelFile: File) {
       require(modelFile.isFile && modelFile.length() > 0L) { "ONNX 모델 파일이 비어 있습니다." }
       val environment = OrtEnvironment.getEnvironment()
