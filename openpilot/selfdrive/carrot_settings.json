@@ -460,6 +460,16 @@
           ]
         },
         {
+          "id": "DISP_EXTERNAL_AI",
+          "ko": "외부 AI",
+          "en": "External AI",
+          "zh": "外部 AI",
+          "params": [
+            "ExternalAIEnabled",
+            "ExternalAIShowOverlay"
+          ]
+        },
+        {
           "id": "DISP_PATH",
           "ko": "경로 표시",
           "en": "Path Display",
@@ -2028,6 +2038,41 @@
       "unit": 1,
       "display_unit": "percent",
       "risk": "high"
+    },
+    {
+      "group": "외부 AI",
+      "name": "ExternalAIEnabled",
+      "title": "외부 스마트폰 AI 사용(0)",
+      "descr": "외부 Android 스마트폰으로 도로 영상을 보내고 객체 탐지 결과를 받습니다.\n0: 끄기\n1: 켜기",
+      "egroup": "EXTERNAL AI",
+      "etitle": "External Phone AI(0)",
+      "edescr": "Send road video to an external Android phone and receive object detections.\n0: Off\n1: On",
+      "cgroup": "外部 AI",
+      "ctitle": "外部手机 AI(0)",
+      "cdescr": "向外部 Android 手机发送道路视频并接收目标检测结果。\n0: 关闭\n1: 开启",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle",
+      "risk": "medium"
+    },
+    {
+      "group": "외부 AI",
+      "name": "ExternalAIShowOverlay",
+      "title": "외부 AI 객체 표시(1)",
+      "descr": "외부 AI가 탐지한 객체를 C3X 주행 화면과 외부 HUD에 표시합니다.\n0: 숨기기\n1: 표시",
+      "egroup": "EXTERNAL AI",
+      "etitle": "Show External AI Objects(1)",
+      "edescr": "Show externally detected objects on the C3X driving screen and external HUD.\n0: Hide\n1: Show",
+      "cgroup": "外部 AI",
+      "ctitle": "显示外部 AI 目标(1)",
+      "cdescr": "在 C3X 行车画面和外部 HUD 上显示外部 AI 检测到的目标。\n0: 隐藏\n1: 显示",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
     },
     {
       "group": "화면",
