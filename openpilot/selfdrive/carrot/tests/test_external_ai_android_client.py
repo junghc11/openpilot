@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.10.0"' in gradle
+  assert 'versionName = "0.11.0"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
@@ -93,6 +93,12 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert "candidate.run(mapOf(candidateInputName to input))" in detector
   assert detector.index("tryCreateQnnSession(modelFile)") < detector.index("nnapiOptions.addNnapi")
   assert 'input.shape[2] in longArrayOf(-1, 320, 416, 640)' in detector
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+  preflight = service.split("private fun runClient", 1)[1].split("while (token.get())", 1)[0]
+  assert "C3X 연결 전 AI 가속 사전 점검 중" in preflight
+  assert "YoloDetector(" in preflight
+  assert "publishMetrics(" in preflight
+  assert "C3X 연결 없이 더미 입력 예열로 확인" in preflight
 
 
 def test_android_qnn_models_are_static_pinned_and_default() -> None:
@@ -185,6 +191,21 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   assert "Locale.getDefault().language != Locale.KOREAN.language" in service
   for field in ("frame=", "box=", "center=", "confidence * 100f"):
     assert field in service
+
+
+def test_android_client_classifies_traffic_light_color_and_sends_it_to_c3x() -> None:
+  detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
+  classifier = (JAVA_ROOT / "TrafficLightColorClassifier.kt").read_text(encoding="utf-8")
+  protocol = (JAVA_ROOT / "FrameProtocol.kt").read_text(encoding="utf-8")
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+
+  assert "TrafficLightColorClassifier.classify(source, detections)" in detector
+  for state in ('const val RED = "red"', 'const val YELLOW = "yellow"', 'const val GREEN = "green"'):
+    assert state in classifier
+  assert "MIN_DOMINANCE_RATIO" in classifier
+  assert 'put("traffic_light_state"' in protocol
+  assert 'put("traffic_light_confidence"' in protocol
+  assert "detectionResult.trafficLightState" in service
 
 
 def test_android_client_copies_safe_c3x_branch_ssh_command() -> None:

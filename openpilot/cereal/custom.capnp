@@ -249,6 +249,8 @@ struct PhoneAIState @0xda96579883444c35 {
 	phoneTotalMs @20 :Float32;
 	inputWidth @21 :UInt16;
 	inputHeight @22 :UInt16;
+	trafficLightState @23 :Text;
+	trafficLightConfidence @24 :Float32;
 }
 
 struct CustomReserved4 @0x80ae746ee2596b11 {

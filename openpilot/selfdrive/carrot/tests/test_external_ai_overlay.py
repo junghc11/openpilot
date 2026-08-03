@@ -5,9 +5,11 @@ from types import SimpleNamespace
 import pytest
 
 from openpilot.selfdrive.carrot.external_ai.overlay import (
+  TrafficLightStateStabilizer,
   phone_ai_compute_badge,
   phone_ai_overlay_objects,
   phone_ai_status_text,
+  resolve_traffic_light_state,
 )
 from openpilot.selfdrive.ui.onroad.external_ai_labels import (
   DISPLAY_NAME_KEYS,
@@ -174,3 +176,30 @@ def test_regular_and_mici_ui_share_external_ai_shape_renderer() -> None:
   assert "external_ai_display_name" in renderer_source
   assert "translate=tr" in renderer_source
   assert "font_fallback" in renderer_source
+
+
+def test_traffic_light_prefers_c3x_red_green_and_phone_yellow() -> None:
+  assert resolve_traffic_light_state("red", 2) == "green"
+  assert resolve_traffic_light_state("green", 1) == "red"
+  assert resolve_traffic_light_state("yellow", 1) == "yellow"
+  assert resolve_traffic_light_state("green", 0) == "green"
+  assert resolve_traffic_light_state("unknown", 0) == "unknown"
+
+
+def test_traffic_light_state_requires_three_phone_frames_and_holds_short_gaps() -> None:
+  stabilizer = TrafficLightStateStabilizer(required_samples=3, hold_seconds=1.5)
+  assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=1, now=1.0) == "unknown"
+  assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=2, now=1.2) == "unknown"
+  assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=3, now=1.4) == "red"
+  # Re-rendering one phone result must not count as another state sample.
+  assert stabilizer.update(detected=True, phone_state="green", model_state=0, sample_id=3, now=1.5) == "red"
+  assert stabilizer.update(detected=False, phone_state="unknown", model_state=0, sample_id=4, now=2.0) == "red"
+  assert stabilizer.update(detected=False, phone_state="unknown", model_state=0, sample_id=5, now=3.1) == "unknown"
+
+
+def test_c3x_overlay_places_compute_badge_bottom_left_and_draws_signal_stack() -> None:
+  renderer_source = (OPENPILOT_ROOT / "selfdrive" / "ui" / "onroad" / "external_ai_overlay.py").read_text(encoding="utf-8")
+  assert "x = rect.x + 14.0" in renderer_source
+  assert "y = rect.y + rect.height - height - 14.0" in renderer_source
+  assert "def _draw_signal_indicator" in renderer_source
+  assert 'TrafficLightStateStabilizer(required_samples=3, hold_seconds=1.5)' in renderer_source

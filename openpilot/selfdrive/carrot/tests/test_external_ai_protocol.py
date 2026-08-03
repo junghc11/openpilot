@@ -29,6 +29,8 @@ def valid_result(**changes) -> dict:
     "phone_total_ms": 41.0,
     "input_width": 320,
     "input_height": 320,
+    "traffic_light_state": "green",
+    "traffic_light_confidence": 0.86,
     "objects": [{
       "class_id": 2,
       "class_name": "car",
@@ -57,6 +59,8 @@ def test_valid_result_is_parsed_with_measured_timing() -> None:
   assert result.runtime_ms == pytest.approx(24.0)
   assert result.phone_total_ms == pytest.approx(41.0)
   assert (result.input_width, result.input_height) == (320, 320)
+  assert result.traffic_light_state == "green"
+  assert result.traffic_light_confidence == pytest.approx(0.86)
   assert result.objects[0].class_name == "car"
   assert result.objects[0].center_x == pytest.approx(0.45)
 
@@ -143,10 +147,22 @@ def test_optional_performance_metrics_remain_compatible_and_are_bounded() -> Non
   assert parsed.runtime_ms == 0.0
   assert parsed.input_width == 0
 
+  legacy.pop("traffic_light_state", None)
+  legacy.pop("traffic_light_confidence", None)
+  parsed = parse_external_ai_result(encode(legacy), now_monotonic_ns=NOW_NS)
+  assert parsed.traffic_light_state == "unknown"
+  assert parsed.traffic_light_confidence == 0.0
+
   with pytest.raises(ExternalAIProtocolError, match="runtime_ms"):
     parse_external_ai_result(encode(valid_result(runtime_ms=60_001.0)), now_monotonic_ns=NOW_NS)
   with pytest.raises(ExternalAIProtocolError, match="provided together"):
     parse_external_ai_result(encode(valid_result(input_height=None)), now_monotonic_ns=NOW_NS)
+
+
+@pytest.mark.parametrize("state", ("blue", "", 1, None))
+def test_invalid_traffic_light_state_is_rejected(state) -> None:
+  with pytest.raises(ExternalAIProtocolError, match="traffic_light_state"):
+    parse_external_ai_result(encode(valid_result(traffic_light_state=state)), now_monotonic_ns=NOW_NS)
 
 
 def test_tracker_reports_disconnect_and_hides_stale_result() -> None:

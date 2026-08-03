@@ -116,6 +116,8 @@ object FrameProtocol {
       put("phone_total_ms", performance.phoneTotalMs)
       put("input_width", detectionResult.inputWidth)
       put("input_height", detectionResult.inputHeight)
+      put("traffic_light_state", detectionResult.trafficLightState)
+      put("traffic_light_confidence", detectionResult.trafficLightConfidence.toDouble())
       put("objects", objects)
     }.toString().toByteArray(StandardCharsets.UTF_8)
     require(json.size <= 65_507) { "탐지 결과 UDP 패킷이 너무 큽니다." }

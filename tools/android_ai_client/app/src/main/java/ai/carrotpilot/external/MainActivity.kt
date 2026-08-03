@@ -442,6 +442,9 @@ class MainActivity : Activity() {
       addView(label("eNPU는 CPU 폴백을 금지한 QNN/HTP 전체 그래프 예열까지 성공했을 때만 표시됩니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(8), 0, 0)
       })
+      addView(label("C3X가 없어도 세션 시작 즉시 더미 입력으로 사전 점검합니다. eNPU·eACCEL·eCPU 결과가 연결 전에 표시됩니다.", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(6), 0, 0)
+      })
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
       topMargin = dp(12)
       bottomMargin = dp(12)

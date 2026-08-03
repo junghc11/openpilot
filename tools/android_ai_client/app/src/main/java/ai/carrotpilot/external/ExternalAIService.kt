@@ -81,16 +81,42 @@ class ExternalAIService : Service() {
     var discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
     var detector: YoloDetector? = null
     try {
+      updateStatus("C3X 연결 전 AI 가속 사전 점검 중\n더미 입력으로 모델 세션 예열")
+      detector = YoloDetector(
+        copyModelToCache(config.modelUri),
+        config.threshold,
+        config.inputSize,
+        tryQnn = modelSpec?.qnnOptimized != false,
+        qnnSkipReason = if (modelSpec?.qnnOptimized == false) {
+          "QNN 건너뜀: Dynamic FP32 CPU 호환 모델"
+        } else {
+          ""
+        },
+      )
+      publishMetrics(
+        modelDisplayName = modelDisplayName,
+        receiveFps = 0.0,
+        inferenceFps = 0.0,
+        backend = detector.backend,
+      )
+      updateStatus(
+        "가속 사전 점검 완료: ${acceleratorBadge(detector.backend)}\n" +
+          "${detector.backendLabel}\nC3X 연결 없이 더미 입력 예열로 확인",
+      )
+      val preflightBadge = acceleratorBadge(detector.backend)
       while (token.get()) {
         val targetHost = if (config.autoDiscover) {
-          updateStatus("같은 사설망에서 CarrotPilot 기기 검색 중\nTCP ${config.framePort} / CAI1·CAI2 확인")
+          updateStatus(
+            "같은 사설망에서 CarrotPilot 기기 검색 중\n" +
+              "가속 사전 점검 $preflightBadge · TCP ${config.framePort} / CAI1·CAI2 확인",
+          )
           DeviceDiscovery.findHost(config.framePort, config.host) { token.get() }
         } else {
           config.host
         }
         if (targetHost == null) {
           if (token.get()) {
-            updateStatus("기기를 찾지 못함\n${discoveryRetryDelayMs / 1_000}초 후 같은 망 다시 검색")
+            updateStatus("기기를 찾지 못함 · 가속 $preflightBadge\n${discoveryRetryDelayMs / 1_000}초 후 같은 망 다시 검색")
             SystemClock.sleep(discoveryRetryDelayMs)
             discoveryRetryDelayMs = (discoveryRetryDelayMs * 2).coerceAtMost(MAX_DISCOVERY_RETRY_DELAY_MS)
           }
@@ -101,24 +127,7 @@ class ExternalAIService : Service() {
           getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit().putString(PREFERENCE_HOST, targetHost).apply()
         }
 
-        val activeDetector = detector ?: try {
-          updateStatus("기기 발견: $targetHost\nYOLO 모델 준비 중", targetHost)
-          YoloDetector(
-            copyModelToCache(config.modelUri),
-            config.threshold,
-            config.inputSize,
-            tryQnn = modelSpec?.qnnOptimized != false,
-            qnnSkipReason = if (modelSpec?.qnnOptimized == false) {
-              "QNN 건너뜀: Dynamic FP32 CPU 호환 모델"
-            } else {
-              ""
-            },
-          ).also { detector = it }
-        } catch (error: Exception) {
-          updateStatus("YOLO 모델 열기 실패\n${error.message}")
-          token.set(false)
-          break
-        }
+        val activeDetector = checkNotNull(detector)
 
         try {
           updateStatus("기기 연결 중: $targetHost:${config.framePort}", targetHost)
@@ -335,7 +344,12 @@ class ExternalAIService : Service() {
   ): String {
     val detections = detectionResult.detections.sortedByDescending(Detection::confidence)
     val header = "${analysisTimeFormat.format(Date())} | frame=${frame.frameId} | ${detections.size} objects\n" +
-      "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | total ${"%.1f".format(performance.phoneTotalMs)} ms"
+      "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | total ${"%.1f".format(performance.phoneTotalMs)} ms" +
+      if (detectionResult.trafficLightState != TrafficLightColorResult.UNKNOWN) {
+        " | signal=${detectionResult.trafficLightState} ${"%.0f".format(detectionResult.trafficLightConfidence * 100f)}%"
+      } else {
+        ""
+      }
     if (detections.isEmpty()) return "$header\n  객체 없음"
     val objects = detections.take(MAX_CONSOLE_OBJECTS).mapIndexed { index, detection ->
       val x1 = (detection.x1 * frame.width).roundToInt().coerceIn(0, frame.width)

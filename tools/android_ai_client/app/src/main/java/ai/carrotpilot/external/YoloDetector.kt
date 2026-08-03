@@ -22,6 +22,8 @@ import kotlin.math.min
 
 data class DetectionResult(
   val detections: List<Detection>,
+  val trafficLightState: String,
+  val trafficLightConfidence: Float,
   val preprocessMs: Double,
   val runtimeMs: Double,
   val postprocessMs: Double,
@@ -82,9 +84,12 @@ class YoloDetector(
         val runtimeEndNs = SystemClock.elapsedRealtimeNanos()
         val output = result[0] as? OnnxTensor ?: error("첫 YOLO 출력이 텐서가 아닙니다.")
         val detections = parseOutput(output, prepared)
+        val trafficLight = TrafficLightColorClassifier.classify(source, detections)
         val postprocessEndNs = SystemClock.elapsedRealtimeNanos()
         return DetectionResult(
           detections = detections,
+          trafficLightState = trafficLight.state,
+          trafficLightConfidence = trafficLight.confidence,
           preprocessMs = nanosToMillis(preprocessEndNs - preprocessStartNs),
           runtimeMs = nanosToMillis(runtimeEndNs - runtimeStartNs),
           postprocessMs = nanosToMillis(postprocessEndNs - runtimeEndNs),

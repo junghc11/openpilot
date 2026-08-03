@@ -27,6 +27,8 @@ def build_phone_ai_payload(
     "inputHeight": result.input_height if valid else 0,
     "modelName": result.model if valid else "",
     "backend": result.backend if valid else "",
+    "trafficLightState": result.traffic_light_state if valid else "unknown",
+    "trafficLightConfidence": result.traffic_light_confidence if valid else 0.0,
     "objects": [
       {
         "classId": item.class_id,

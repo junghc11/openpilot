@@ -22,6 +22,7 @@ SUPPORTED_OBJECT_CLASSES = frozenset((
   "traffic light",
   "stop sign",
 ))
+SUPPORTED_TRAFFIC_LIGHT_STATES = frozenset(("unknown", "red", "yellow", "green"))
 
 
 class ExternalAIProtocolError(ValueError):
@@ -76,6 +77,8 @@ class ExternalAIResult:
   phone_total_ms: float
   input_width: int
   input_height: int
+  traffic_light_state: str
+  traffic_light_confidence: float
 
 
 def _mapping(value: object, field: str) -> dict:
@@ -120,6 +123,16 @@ def _short_text(value: object, field: str, *, maximum_length: int = 64) -> str:
   parsed = value.strip()
   if not parsed or len(parsed) > maximum_length:
     raise ExternalAIProtocolError(f"{field} must contain 1..{maximum_length} characters")
+  return parsed
+
+
+def _optional_traffic_light_state(root: dict) -> str:
+  value = root.get("traffic_light_state", "unknown")
+  if not isinstance(value, str):
+    raise ExternalAIProtocolError("traffic_light_state must be text")
+  parsed = value.strip().lower()
+  if parsed not in SUPPORTED_TRAFFIC_LIGHT_STATES:
+    raise ExternalAIProtocolError("traffic_light_state is unsupported")
   return parsed
 
 
@@ -214,6 +227,8 @@ def parse_external_ai_result(
   input_height = _optional_integer(root, "input_height", minimum=32, maximum=8192)
   if (input_width == 0) != (input_height == 0):
     raise ExternalAIProtocolError("input_width and input_height must be provided together")
+  traffic_light_state = _optional_traffic_light_state(root)
+  traffic_light_confidence = _optional_number(root, "traffic_light_confidence", minimum=0.0, maximum=1.0)
 
   return ExternalAIResult(
     protocol_version=protocol_version,
@@ -235,6 +250,8 @@ def parse_external_ai_result(
     phone_total_ms=phone_total_ms,
     input_width=input_width,
     input_height=input_height,
+    traffic_light_state=traffic_light_state,
+    traffic_light_confidence=traffic_light_confidence,
   )
 
 

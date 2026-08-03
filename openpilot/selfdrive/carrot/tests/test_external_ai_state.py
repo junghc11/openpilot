@@ -30,6 +30,8 @@ def parsed_result():
     "phone_total_ms": 30.0,
     "input_width": 320,
     "input_height": 320,
+    "traffic_light_state": "yellow",
+    "traffic_light_confidence": 0.73,
     "objects": [{
       "class_id": 5,
       "class_name": "bus",
@@ -55,6 +57,8 @@ def test_phone_ai_payload_contains_fresh_detection_and_health() -> None:
   assert payload["runtimeMs"] == 18.0
   assert payload["phoneTotalMs"] == 30.0
   assert payload["inputWidth"] == 320
+  assert payload["trafficLightState"] == "yellow"
+  assert payload["trafficLightConfidence"] == 0.73
   assert payload["objects"] == [{
     "classId": 5,
     "className": "bus",
@@ -88,6 +92,8 @@ def test_phone_ai_cereal_service_uses_reserved_fork_slot() -> None:
 
   assert "phoneAIState @110 :Custom.PhoneAIState;" in log_schema
   assert "struct PhoneAIState @0xda96579883444c35" in custom_schema
+  assert "trafficLightState @23 :Text;" in custom_schema
+  assert "trafficLightConfidence @24 :Float32;" in custom_schema
   assert '"phoneAIState": (True, 10., 10)' in services
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ CPU_BADGE_BACKENDS = frozenset((
   "cpu",
   "cpu-fallback",
 ))
+TRAFFIC_LIGHT_STATES = frozenset(("red", "yellow", "green"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,68 @@ class ExternalAIOverlayObject:
   y: float
   width: float
   height: float
+
+
+class TrafficLightStateStabilizer:
+  """Debounce phone/model signal observations for a display-only traffic light."""
+
+  def __init__(self, *, required_samples: int = 3, hold_seconds: float = 1.5) -> None:
+    if required_samples < 1:
+      raise ValueError("required_samples must be positive")
+    if not math.isfinite(hold_seconds) or hold_seconds <= 0.0:
+      raise ValueError("hold_seconds must be positive")
+    self.required_samples = required_samples
+    self.hold_seconds = hold_seconds
+    self.state = "unknown"
+    self._candidate = "unknown"
+    self._candidate_samples = 0
+    self._last_sample_id: int | None = None
+    self._last_detection_time = 0.0
+    self._last_supported_time = 0.0
+
+  def update(
+      self,
+      *,
+      detected: bool,
+      phone_state: str,
+      model_state: int,
+      sample_id: int,
+      now: float | None = None,
+  ) -> str:
+    now_value = time.monotonic() if now is None else float(now)
+    if detected:
+      self._last_detection_time = now_value
+
+    candidate = resolve_traffic_light_state(phone_state, model_state)
+    if detected and candidate in TRAFFIC_LIGHT_STATES and sample_id != self._last_sample_id:
+      self._last_sample_id = sample_id
+      self._last_supported_time = now_value
+      if candidate == self._candidate:
+        self._candidate_samples += 1
+      else:
+        self._candidate = candidate
+        self._candidate_samples = 1
+      if self._candidate_samples >= self.required_samples:
+        self.state = candidate
+    elif sample_id != self._last_sample_id:
+      self._last_sample_id = sample_id
+      self._candidate = "unknown"
+      self._candidate_samples = 0
+
+    last_evidence = max(self._last_detection_time, self._last_supported_time)
+    if not detected and now_value - last_evidence > self.hold_seconds:
+      self.reset()
+    elif detected and candidate == "unknown" and now_value - self._last_supported_time > self.hold_seconds:
+      self.state = "unknown"
+    return self.state
+
+  def reset(self) -> None:
+    self.state = "unknown"
+    self._candidate = "unknown"
+    self._candidate_samples = 0
+    self._last_sample_id = None
+    self._last_detection_time = 0.0
+    self._last_supported_time = 0.0
 
 
 def _field(value: Any, name: str, default: Any = None) -> Any:
@@ -55,6 +119,24 @@ def phone_ai_compute_badge(state: Any) -> str:
   if backend in CPU_BADGE_BACKENDS or backend.startswith("onnxruntime-cpu-"):
     return "eCPU"
   return ""
+
+
+def resolve_traffic_light_state(phone_state: Any, model_state: Any) -> str:
+  """Fuse phone color analysis with the existing C3X traffic state for display only."""
+  normalized_phone = str(phone_state or "unknown").strip().lower()
+  try:
+    normalized_model = int(model_state)
+  except (TypeError, ValueError):
+    normalized_model = 0
+  # The stock C3X planner is preferred for red/green. It currently has no yellow state,
+  # so a confident phone crop analysis supplies yellow and acts as the fallback.
+  if normalized_phone == "yellow":
+    return "yellow"
+  if normalized_model == 1:
+    return "red"
+  if normalized_model == 2:
+    return "green"
+  return normalized_phone if normalized_phone in TRAFFIC_LIGHT_STATES else "unknown"
 
 
 def phone_ai_status_text(
