@@ -12,10 +12,11 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   manifest = (ANDROID_ROOT / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
 
   assert "앱 실행 시 같은 망 자동 검색 및 시작" in activity
-  assert "권장 모델 다운로드 (YOLO11n 동적 · 10.4 MB)" in activity
+  assert "권장 모델 선택" in activity
+  assert "RecommendedModels.ALL.map" in activity
+  assert "선택 모델 삭제" in activity
   assert "YOLO 입력 크기 (320/416/640 · 권장 320)" in activity
   assert "다른 ONNX 파일 선택" in activity
-  assert "권장 모델 삭제" in activity
   assert "동의 후 다운로드" in activity
   assert "autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive" in activity
   assert "startClient(autoDiscover = true)" in activity
@@ -60,7 +61,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.7.0"' in gradle
+  assert 'versionName = "0.8.0"' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
@@ -89,13 +90,19 @@ def test_android_recommended_model_download_is_pinned_and_validated() -> None:
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
   service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
 
-  assert 'DOWNLOAD_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx"' in downloader
-  assert "EXPECTED_SIZE = 10_930_182L" in downloader
-  assert 'EXPECTED_SHA256 = "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b"' in downloader
+  for name, size, sha256 in (
+    ("yolo11n", "10_930_182L", "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b"),
+    ("yolo11s", "38_051_729L", "21d6650c5097610c92c76ce5e4b717976059169eaea4962035b90c6a92c07a8f"),
+    ("yolo11m", "80_673_621L", "8a37b5c53ff642831aa454156b548ec2cf2537827445385c3e1c1b276cb666a3"),
+  ):
+    assert f"/v8.4.0/{name}.onnx" in downloader
+    assert f"expectedSize = {size}" in downloader
+    assert f'expectedSha256 = "{sha256}"' in downloader
+  assert "val ALL = listOf(YOLO11N, YOLO11S, YOLO11M)" in downloader
   assert 'require(sourceUrl.protocol == "https")' in downloader
   assert "connection.responseCode == HttpURLConnection.HTTP_OK" in downloader
-  assert "received <= EXPECTED_SIZE" in downloader
-  assert "actualSha256 == EXPECTED_SHA256" in downloader
+  assert "received <= model.expectedSize" in downloader
+  assert "actualSha256 == model.expectedSha256" in downloader
   assert "YoloDetector.validateModelFile(partial)" in downloader
   assert "StandardCopyOption.ATOMIC_MOVE" in downloader
   assert "Files.deleteIfExists(partial.toPath())" in downloader
@@ -110,6 +117,30 @@ def test_android_recommended_model_download_is_pinned_and_validated() -> None:
   assert "channelsFirst || channelsLast" in detector
   assert "uri.scheme == ContentResolver.SCHEME_FILE" in service
   assert "FileInputStream(File(requireNotNull(uri.path)" in service
+
+
+def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() -> None:
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+  style = (ANDROID_ROOT / "app" / "src" / "main" / "res" / "values" / "styles.xml").read_text(encoding="utf-8")
+
+  for text in ("실시간 프레임 추종", "VIDEO -- FPS", "AI -- FPS", "추종률 --%", "SKIP --/s", "실시간 객체 분석 콘솔"):
+    assert text in activity
+  assert "Color.rgb(247, 249, 252)" in activity
+  assert "android:windowLightStatusBar\">true" in style
+  assert "ACTION_ANALYSIS" in activity and "ACTION_METRICS" in activity
+  assert "ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L" in service
+  assert '"onnxruntime-qnn" -> "eNPU"' in service
+  assert '"onnxruntime-nnapi" -> "eACCEL"' in service
+  assert 'else -> "eCPU"' in service
+  for field in ("EXTRA_VIDEO_FPS", "EXTRA_AI_FPS", "EXTRA_FOLLOW_RATE", "EXTRA_SKIPPED_FPS"):
+    assert field in service and field in activity
+  assert "sourceWindowFirstTimestampNs" in service
+  assert "sourceWindowLastTimestampNs" in service
+  assert "(receivedCount - 1) / sourceSeconds" in service
+  assert "Locale.getDefault().language != Locale.KOREAN.language" in service
+  for field in ("frame=", "box=", "center=", "confidence * 100f"):
+    assert field in service
 
 
 def test_android_discovery_is_bounded_to_private_subnets_and_carrot_port() -> None:

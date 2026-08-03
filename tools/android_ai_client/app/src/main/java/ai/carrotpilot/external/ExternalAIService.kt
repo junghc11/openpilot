@@ -24,7 +24,11 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
 
 class ExternalAIService : Service() {
   @Volatile private var runToken: AtomicBoolean? = null
@@ -33,6 +37,7 @@ class ExternalAIService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
   private var wifiLock: WifiManager.WifiLock? = null
   private var lastStatus = "중지됨"
+  private val analysisTimeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
   override fun onCreate() {
     super.onCreate()
@@ -70,6 +75,7 @@ class ExternalAIService : Service() {
 
   private fun runClient(config: ServiceConfig, token: AtomicBoolean) {
     val modelName = config.modelUri.lastPathSegment ?: "yolo.onnx"
+    val modelDisplayName = RecommendedModels.findByUri(this, config.modelUri)?.displayName ?: modelName
     var retryDelayMs = MIN_RETRY_DELAY_MS
     var discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
     var detector: YoloDetector? = null
@@ -115,7 +121,7 @@ class ExternalAIService : Service() {
             retryDelayMs = MIN_RETRY_DELAY_MS
             DataInputStream(socket.getInputStream().buffered()).use { input ->
               DatagramSocket().use { resultSocket ->
-                processFrames(config, targetHost, activeDetector, modelName, input, resultSocket, token)
+                processFrames(config, targetHost, activeDetector, modelName, modelDisplayName, input, resultSocket, token)
               }
             }
           }
@@ -152,6 +158,7 @@ class ExternalAIService : Service() {
     targetHost: String,
     detector: YoloDetector,
     modelName: String,
+    modelDisplayName: String,
     input: DataInputStream,
     resultSocket: DatagramSocket,
     token: AtomicBoolean,
@@ -162,15 +169,20 @@ class ExternalAIService : Service() {
     var receivedCount = 0
     var inferenceCount = 0
     var statusWindowStartNs = SystemClock.elapsedRealtimeNanos()
+    var sourceWindowFirstTimestampNs = 0L
+    var sourceWindowLastTimestampNs = 0L
     val performanceStats = RollingPerformanceStats()
     var lastObjects = 0
     var lastTransport = "대기"
     var previousEncoding = ""
+    var lastAnalysisBroadcastNs = 0L
     ReusableJpegDecoder().use { jpegDecoder ->
       ReusableH264Decoder().use { h264Decoder ->
         while (token.get()) {
           val receivedFrame = FrameProtocol.readFrame(input)
           receivedCount++
+          if (sourceWindowFirstTimestampNs == 0L) sourceWindowFirstTimestampNs = receivedFrame.sourceTimestampNs
+          sourceWindowLastTimestampNs = receivedFrame.sourceTimestampNs
           if (receivedFrame.encoding != previousEncoding) {
             if (receivedFrame.encoding == FrameProtocol.ENCODING_JPEG) h264Decoder.reset()
             previousEncoding = receivedFrame.encoding
@@ -220,24 +232,51 @@ class ExternalAIService : Service() {
             modelName,
             detector.backend,
           )
+          if (inferenceEndNs - lastAnalysisBroadcastNs >= ANALYSIS_BROADCAST_INTERVAL_NS) {
+            publishAnalysisLog(buildAnalysisLog(
+              modelDisplayName = modelDisplayName,
+              frame = inferenceFrame,
+              detectionResult = detectionResult,
+              performance = performance,
+              backend = detector.backend,
+              transportLabel = lastTransport,
+            ))
+            lastAnalysisBroadcastNs = inferenceEndNs
+          }
 
           val windowNs = inferenceEndNs - statusWindowStartNs
           if (windowNs >= 1_000_000_000L) {
             val seconds = windowNs / 1_000_000_000.0
+            val sourceSeconds = (sourceWindowLastTimestampNs - sourceWindowFirstTimestampNs) / 1_000_000_000.0
+            val receiveFps = if (receivedCount > 1 && sourceSeconds > 0.0) {
+              (receivedCount - 1) / sourceSeconds
+            } else {
+              receivedCount / seconds
+            }
+            val inferenceFps = inferenceCount / seconds
+            val performanceSummary = performanceStats.summary()
             updateStatus(buildStatus(
               config = config,
               targetHost = targetHost,
-              receiveFps = receivedCount / seconds,
-              inferenceFps = inferenceCount / seconds,
-              performance = performanceStats.summary(),
+              receiveFps = receiveFps,
+              inferenceFps = inferenceFps,
+              performance = performanceSummary,
               inputWidth = detector.inputWidth,
               inputHeight = detector.inputHeight,
               objectCount = lastObjects,
               backendLabel = detector.backendLabel,
               transportLabel = lastTransport,
             ))
+            publishMetrics(
+              modelDisplayName = modelDisplayName,
+              receiveFps = receiveFps,
+              inferenceFps = inferenceFps,
+              backend = detector.backend,
+            )
             receivedCount = 0
             inferenceCount = 0
+            sourceWindowFirstTimestampNs = 0L
+            sourceWindowLastTimestampNs = 0L
             statusWindowStartNs = inferenceEndNs
           }
         }
@@ -267,6 +306,75 @@ class ExternalAIService : Service() {
       "객체 ${objectCount}개 · 표본 ${performance.samples}개\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
       "열 상태 ${thermalStatusLabel(thermalStatus)}($thermalStatus) · 총 지연은 C3X에서 측정"
+  }
+
+  private fun buildAnalysisLog(
+    modelDisplayName: String,
+    frame: C3XFrame,
+    detectionResult: DetectionResult,
+    performance: FramePerformance,
+    backend: String,
+    transportLabel: String,
+  ): String {
+    val detections = detectionResult.detections.sortedByDescending(Detection::confidence)
+    val header = "${analysisTimeFormat.format(Date())} | frame=${frame.frameId} | ${detections.size} objects\n" +
+      "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | total ${"%.1f".format(performance.phoneTotalMs)} ms"
+    if (detections.isEmpty()) return "$header\n  객체 없음"
+    val objects = detections.take(MAX_CONSOLE_OBJECTS).mapIndexed { index, detection ->
+      val x1 = (detection.x1 * frame.width).roundToInt().coerceIn(0, frame.width)
+      val y1 = (detection.y1 * frame.height).roundToInt().coerceIn(0, frame.height)
+      val x2 = (detection.x2 * frame.width).roundToInt().coerceIn(0, frame.width)
+      val y2 = (detection.y2 * frame.height).roundToInt().coerceIn(0, frame.height)
+      val centerX = (x1 + x2) / 2
+      val centerY = (y1 + y2) / 2
+      "  ${index + 1}. ${localizedObjectName(detection.className)}(${detection.className}) " +
+        "${"%.1f".format(detection.confidence * 100f)}% | box=($x1,$y1)-($x2,$y2) | center=($centerX,$centerY)"
+    }
+    val omitted = detections.size - objects.size
+    return buildString {
+      append(header)
+      append('\n')
+      append(objects.joinToString("\n"))
+      if (omitted > 0) append("\n  ... 외 ${omitted}개")
+    }
+  }
+
+  private fun localizedObjectName(className: String): String {
+    if (Locale.getDefault().language != Locale.KOREAN.language) return className
+    return when (className) {
+      "person" -> "사람"
+      "bicycle" -> "자전거"
+      "car" -> "차량"
+      "motorcycle" -> "오토바이"
+      "bus" -> "버스"
+      "truck" -> "트럭"
+      "traffic light" -> "신호등"
+      "stop sign" -> "정지표지판"
+      else -> className
+    }
+  }
+
+  private fun acceleratorBadge(backend: String): String = when (backend) {
+    "onnxruntime-qnn" -> "eNPU"
+    "onnxruntime-nnapi" -> "eACCEL"
+    else -> "eCPU"
+  }
+
+  private fun publishAnalysisLog(message: String) {
+    sendBroadcast(Intent(ACTION_ANALYSIS).setPackage(packageName).putExtra(EXTRA_ANALYSIS_LOG, message))
+  }
+
+  private fun publishMetrics(modelDisplayName: String, receiveFps: Double, inferenceFps: Double, backend: String) {
+    val followRate = if (receiveFps > 0.0) (inferenceFps / receiveFps * 100.0).coerceIn(0.0, 100.0) else 0.0
+    val skippedFps = (receiveFps - inferenceFps).coerceAtLeast(0.0)
+    sendBroadcast(Intent(ACTION_METRICS).setPackage(packageName).apply {
+      putExtra(EXTRA_MODEL_NAME, modelDisplayName)
+      putExtra(EXTRA_VIDEO_FPS, receiveFps)
+      putExtra(EXTRA_AI_FPS, inferenceFps)
+      putExtra(EXTRA_FOLLOW_RATE, followRate)
+      putExtra(EXTRA_SKIPPED_FPS, skippedFps)
+      putExtra(EXTRA_ACCELERATOR_BADGE, acceleratorBadge(backend))
+    })
   }
 
   private fun thermalStatusLabel(status: Int): String = when (status) {
@@ -390,6 +498,8 @@ class ExternalAIService : Service() {
     const val ACTION_START = "ai.carrotpilot.external.START"
     const val ACTION_STOP = "ai.carrotpilot.external.STOP"
     const val ACTION_STATUS = "ai.carrotpilot.external.STATUS"
+    const val ACTION_ANALYSIS = "ai.carrotpilot.external.ANALYSIS"
+    const val ACTION_METRICS = "ai.carrotpilot.external.METRICS"
     const val EXTRA_HOST = "host"
     const val EXTRA_FRAME_PORT = "frame_port"
     const val EXTRA_RESULT_PORT = "result_port"
@@ -400,6 +510,13 @@ class ExternalAIService : Service() {
     const val EXTRA_AUTO_DISCOVER = "auto_discover"
     const val EXTRA_STATUS = "status"
     const val EXTRA_DISCOVERED_HOST = "discovered_host"
+    const val EXTRA_ANALYSIS_LOG = "analysis_log"
+    const val EXTRA_MODEL_NAME = "model_name"
+    const val EXTRA_VIDEO_FPS = "video_fps"
+    const val EXTRA_AI_FPS = "ai_fps"
+    const val EXTRA_FOLLOW_RATE = "follow_rate"
+    const val EXTRA_SKIPPED_FPS = "skipped_fps"
+    const val EXTRA_ACCELERATOR_BADGE = "accelerator_badge"
     @Volatile var serviceActive = false
       private set
     @Volatile var clientConnected = false
@@ -413,6 +530,8 @@ class ExternalAIService : Service() {
     private const val MAX_DISCOVERY_RETRY_DELAY_MS = 30_000L
     private const val PREFERENCES_NAME = "external_ai"
     private const val PREFERENCE_HOST = "host"
+    private const val ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L
+    private const val MAX_CONSOLE_OBJECTS = 12
   }
 }
 

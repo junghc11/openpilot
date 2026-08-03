@@ -10,18 +10,26 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.util.ArrayDeque
 
 @SuppressLint("SetTextI18n")
 class MainActivity : Activity() {
@@ -33,18 +41,29 @@ class MainActivity : Activity() {
   private lateinit var inferenceFps: EditText
   private lateinit var inputSize: EditText
   private lateinit var autoConnect: CheckBox
+  private lateinit var modelSelector: Spinner
   private lateinit var downloadModelButton: Button
   private lateinit var deleteModelButton: Button
   private lateinit var modelLabel: TextView
+  private lateinit var performanceHud: TextView
+  private lateinit var backendBadge: TextView
+  private lateinit var analysisConsole: TextView
+  private lateinit var analysisConsoleScroll: ScrollView
   private lateinit var status: TextView
   private var modelUri: Uri? = null
+  private var selectedCatalogModel = RecommendedModels.DEFAULT
+  private var suppressModelSelection = false
+  private val analysisEntries = ArrayDeque<String>()
   private var activityStarted = false
   @Volatile private var downloadingModel = false
   private var downloadThread: Thread? = null
 
   private val statusReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
-      status.text = intent?.getStringExtra(ExternalAIService.EXTRA_STATUS) ?: "상태 정보 없음"
+      intent ?: return
+      intent.getStringExtra(ExternalAIService.EXTRA_STATUS)?.let { status.text = it }
+      intent.getStringExtra(ExternalAIService.EXTRA_ANALYSIS_LOG)?.let(::appendAnalysisLog)
+      if (intent.action == ExternalAIService.ACTION_METRICS) updatePerformanceHud(intent)
       intent?.getStringExtra(ExternalAIService.EXTRA_DISCOVERED_HOST)?.let { discoveredHost ->
         if (discoveredHost.isNotBlank() && host.text.toString() != discoveredHost) {
           host.setText(discoveredHost)
@@ -67,7 +86,10 @@ class MainActivity : Activity() {
   override fun onStart() {
     super.onStart()
     activityStarted = true
-    val filter = IntentFilter(ExternalAIService.ACTION_STATUS)
+    val filter = IntentFilter(ExternalAIService.ACTION_STATUS).apply {
+      addAction(ExternalAIService.ACTION_ANALYSIS)
+      addAction(ExternalAIService.ACTION_METRICS)
+    }
     if (Build.VERSION.SDK_INT >= 33) {
       registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
     } else {
@@ -114,23 +136,23 @@ class MainActivity : Activity() {
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       setPadding(padding, padding, padding, padding)
-      setBackgroundColor(Color.rgb(16, 20, 24))
+      setBackgroundColor(Color.rgb(247, 249, 252))
     }
     root.addView(TextView(this).apply {
       text = "Carrot External AI"
       textSize = 26f
-      setTextColor(Color.WHITE)
+      setTextColor(Color.rgb(25, 35, 48))
     })
     root.addView(TextView(this).apply {
       text = "YOLO 탐지 결과는 화면 표시 전용이며 차량 제어에는 사용되지 않습니다."
       textSize = 15f
-      setTextColor(Color.rgb(255, 183, 77))
+      setTextColor(Color.rgb(196, 82, 0))
       setPadding(0, (8 * density).toInt(), 0, (18 * density).toInt())
     })
     root.addView(TextView(this).apply {
       text = "스마트폰 핫스팟을 포함한 같은 사설망에서 C3/C3X/C4를 자동 검색합니다."
       textSize = 14f
-      setTextColor(Color.LTGRAY)
+      setTextColor(Color.rgb(74, 85, 104))
       setPadding(0, 0, 0, (10 * density).toInt())
     })
     root.addView(TextView(this).apply {
@@ -140,13 +162,13 @@ class MainActivity : Activity() {
         "기본 빌드: NNAPI → CPU · QNN/HTP 런타임 미포함"
       }
       textSize = 13f
-      setTextColor(if (BuildConfig.QNN_EP_INCLUDED) Color.rgb(76, 175, 80) else Color.LTGRAY)
+      setTextColor(if (BuildConfig.QNN_EP_INCLUDED) Color.rgb(20, 120, 70) else Color.rgb(74, 85, 104))
       setPadding(0, 0, 0, (10 * density).toInt())
     })
 
     autoConnect = CheckBox(this).apply {
       text = "앱 실행 시 같은 망 자동 검색 및 시작"
-      setTextColor(Color.WHITE)
+      setTextColor(Color.rgb(31, 41, 55))
       setOnCheckedChangeListener { _, checked ->
         preferences.edit().putBoolean(KEY_AUTO_CONNECT, checked).apply()
         if (checked && activityStarted && modelUri != null && !ExternalAIService.serviceActive) {
@@ -163,14 +185,37 @@ class MainActivity : Activity() {
     inferenceFps = addField(root, "목표 추론 FPS (1~20)", "5")
     inputSize = addField(root, "YOLO 입력 크기 (320/416/640 · 권장 320)", "320")
 
+    root.addView(TextView(this).apply {
+      text = "권장 모델 선택"
+      textSize = 16f
+      setTypeface(typeface, Typeface.BOLD)
+      setTextColor(Color.rgb(31, 41, 55))
+      setPadding(0, (14 * density).toInt(), 0, (4 * density).toInt())
+    })
+    modelSelector = Spinner(this).apply {
+      adapter = ArrayAdapter(
+        this@MainActivity,
+        android.R.layout.simple_spinner_item,
+        RecommendedModels.ALL.map(VerifiedModelSpec::selectorLabel),
+      ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+      onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+        override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+          if (!suppressModelSelection) selectCatalogModel(RecommendedModels.ALL[position])
+        }
+
+        override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+      }
+    }
+    root.addView(modelSelector, matchWidth())
+
     modelLabel = TextView(this).apply {
-      setTextColor(Color.LTGRAY)
+      setTextColor(Color.rgb(74, 85, 104))
       textSize = 14f
       setPadding(0, (12 * density).toInt(), 0, (8 * density).toInt())
     }
     root.addView(modelLabel)
     downloadModelButton = Button(this).apply {
-      setOnClickListener { confirmRecommendedModelDownload() }
+      setOnClickListener { confirmSelectedModelDownload() }
     }
     root.addView(downloadModelButton, matchWidth())
 
@@ -180,11 +225,76 @@ class MainActivity : Activity() {
       setOnClickListener { selectModel() }
     }, weighted())
     deleteModelButton = Button(this).apply {
-      text = "권장 모델 삭제"
-      setOnClickListener { deleteRecommendedModel() }
+      text = "선택 모델 삭제"
+      setOnClickListener { deleteSelectedModel() }
     }
     modelControls.addView(deleteModelButton, weighted())
     root.addView(modelControls, matchWidth())
+
+    val liveHeader = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(0, (18 * density).toInt(), 0, (6 * density).toInt())
+    }
+    liveHeader.addView(TextView(this).apply {
+      text = "실시간 프레임 추종"
+      textSize = 18f
+      setTypeface(typeface, Typeface.BOLD)
+      setTextColor(Color.rgb(31, 41, 55))
+    }, weighted())
+    backendBadge = TextView(this).apply {
+      text = "대기"
+      textSize = 15f
+      gravity = Gravity.CENTER
+      setTypeface(Typeface.DEFAULT_BOLD)
+      setTextColor(Color.WHITE)
+      setPadding((14 * density).toInt(), (7 * density).toInt(), (14 * density).toInt(), (7 * density).toInt())
+      background = roundedBackground(Color.rgb(100, 116, 139), 18f)
+    }
+    liveHeader.addView(backendBadge)
+    root.addView(liveHeader, matchWidth())
+
+    performanceHud = TextView(this).apply {
+      text = "MODEL 대기\nVIDEO -- FPS   AI -- FPS\n추종률 --%   SKIP --/s"
+      textSize = 20f
+      setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+      setTextColor(Color.rgb(15, 23, 42))
+      setPadding(padding, (14 * density).toInt(), padding, (14 * density).toInt())
+      background = roundedBackground(Color.rgb(232, 241, 250), 14f, Color.rgb(174, 199, 224))
+    }
+    root.addView(performanceHud, matchWidth())
+
+    val consoleHeader = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(0, (14 * density).toInt(), 0, (5 * density).toInt())
+    }
+    consoleHeader.addView(TextView(this).apply {
+      text = "실시간 객체 분석 콘솔"
+      textSize = 17f
+      setTypeface(typeface, Typeface.BOLD)
+      setTextColor(Color.rgb(31, 41, 55))
+    }, weighted())
+    consoleHeader.addView(Button(this).apply {
+      text = "로그 지우기"
+      setOnClickListener { clearAnalysisLog() }
+    })
+    root.addView(consoleHeader, matchWidth())
+
+    analysisConsole = TextView(this).apply {
+      text = CONSOLE_PLACEHOLDER
+      textSize = 12f
+      typeface = Typeface.MONOSPACE
+      setTextColor(Color.rgb(15, 23, 42))
+      setTextIsSelectable(true)
+      setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())
+      background = roundedBackground(Color.rgb(241, 245, 249), 12f, Color.rgb(203, 213, 225))
+    }
+    analysisConsoleScroll = ScrollView(this).apply {
+      isFillViewport = true
+      addView(analysisConsole, matchWidth())
+    }
+    root.addView(analysisConsoleScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (230 * density).toInt()))
 
     root.addView(Button(this).apply {
       text = "같은 망 자동 검색 후 시작"
@@ -211,8 +321,8 @@ class MainActivity : Activity() {
     status = TextView(this).apply {
       text = "중지됨"
       textSize = 16f
-      setTextColor(Color.WHITE)
-      setBackgroundColor(Color.rgb(36, 43, 49))
+      setTextColor(Color.rgb(31, 41, 55))
+      background = roundedBackground(Color.rgb(255, 247, 230), 12f, Color.rgb(242, 193, 108))
       setPadding(padding, padding, padding, padding)
     }
     root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -225,12 +335,12 @@ class MainActivity : Activity() {
     parent.addView(TextView(this).apply {
       text = label
       textSize = 13f
-      setTextColor(Color.LTGRAY)
+      setTextColor(Color.rgb(74, 85, 104))
     })
     return EditText(this).also { field ->
       field.hint = hintValue
-      field.setTextColor(Color.WHITE)
-      field.setHintTextColor(Color.GRAY)
+      field.setTextColor(Color.rgb(31, 41, 55))
+      field.setHintTextColor(Color.rgb(148, 163, 184))
       field.setSingleLine(true)
       parent.addView(field, matchWidth())
     }
@@ -247,34 +357,40 @@ class MainActivity : Activity() {
     startActivityForResult(intent, REQUEST_MODEL)
   }
 
-  private fun confirmRecommendedModelDownload() {
+  private fun confirmSelectedModelDownload() {
     if (downloadingModel) return
+    val model = selectedCatalogModel
     AlertDialog.Builder(this)
-      .setTitle("권장 모델 다운로드")
+      .setTitle("${model.displayName} 다운로드")
       .setMessage(
-        "공식 Ultralytics YOLO11n ONNX ${RecommendedModel.VERSION} 모델을 다운로드합니다.\n\n" +
-          "크기: 10.4 MB\n입력: 동적 FP32 · 앱 기본 실행 320×320\n라이선스: AGPL-3.0 또는 Enterprise\n\n" +
-          "라이선스 조건을 확인하고 개인·오픈소스 실험 범위에 맞게 사용하세요.\n${RecommendedModel.LICENSE_URL}",
+        "공식 Ultralytics ${RecommendedModels.VERSION} 모델을 다운로드합니다.\n\n" +
+          "용도: ${model.profileLabel}\n" +
+          "COCO mAP50-95: ${model.map5095}\n" +
+          "크기: ${"%.1f".format(model.sizeMegabytes)} MB\n" +
+          "형식: 동적 FP32 ONNX · QNN/NNAPI에서 FP16 가속 허용\n" +
+          "시험 권장: ${model.suggestedSettings}\n" +
+          "라이선스: AGPL-3.0 또는 Enterprise\n\n" +
+          "라이선스 조건을 확인하고 개인·오픈소스 실험 범위에 맞게 사용하세요.\n${RecommendedModels.LICENSE_URL}",
       )
       .setNegativeButton("취소", null)
-      .setPositiveButton("동의 후 다운로드") { _, _ -> downloadRecommendedModel() }
+      .setPositiveButton("동의 후 다운로드") { _, _ -> downloadSelectedModel(model) }
       .show()
   }
 
-  private fun downloadRecommendedModel() {
+  private fun downloadSelectedModel(model: VerifiedModelSpec) {
     if (downloadingModel) return
     downloadingModel = true
-    status.text = "권장 YOLO11n 모델 다운로드 준비 중"
+    status.text = "${model.displayName} 다운로드 준비 중"
     updateModelLabel()
     downloadThread = Thread({
       try {
-        val file = RecommendedModel.download(this) { received, total ->
+        val file = RecommendedModels.download(this, model) { received, total ->
           val percent = (received * 100L / total).toInt().coerceIn(0, 100)
           val receivedMegabytes = received / 1_048_576.0
           runOnUiThread {
             if (!isDestroyed) {
-              downloadModelButton.text = "권장 모델 다운로드 중 $percent%"
-              status.text = "YOLO11n 다운로드 $percent% · ${"%.1f".format(receivedMegabytes)} MB"
+              downloadModelButton.text = "${model.id} 다운로드 중 $percent%"
+              status.text = "${model.displayName} 다운로드 $percent% · ${"%.1f".format(receivedMegabytes)} MB"
             }
           }
         }
@@ -284,8 +400,8 @@ class MainActivity : Activity() {
           preferences.edit().putString(KEY_MODEL_URI, modelUri.toString()).apply()
           downloadingModel = false
           updateModelLabel()
-          status.text = "권장 모델 설치 및 SHA-256·ONNX 검증 완료"
-          Toast.makeText(this, "YOLO11n 권장 모델 설치 완료", Toast.LENGTH_LONG).show()
+          status.text = "${model.displayName} 설치 및 SHA-256·ONNX 검증 완료"
+          Toast.makeText(this, "${model.displayName} 설치 완료", Toast.LENGTH_LONG).show()
           if (activityStarted && autoConnect.isChecked) startClient(autoDiscover = true)
         }
       } catch (error: Exception) {
@@ -293,29 +409,46 @@ class MainActivity : Activity() {
           if (isDestroyed) return@runOnUiThread
           downloadingModel = false
           updateModelLabel()
-          status.text = "권장 모델 다운로드 실패\n${error.message ?: error.javaClass.simpleName}"
+          status.text = "${model.displayName} 다운로드 실패\n${error.message ?: error.javaClass.simpleName}"
           Toast.makeText(this, "모델 다운로드 실패: ${error.message}", Toast.LENGTH_LONG).show()
         }
       } finally {
         downloadThread = null
       }
-    }, "recommended-model-download").apply { start() }
+    }, "verified-model-${model.id}-download").apply { start() }
   }
 
-  private fun deleteRecommendedModel() {
+  private fun deleteSelectedModel() {
     downloadThread?.interrupt()
-    val selectedRecommended = isRecommendedModelUri(modelUri)
-    if (selectedRecommended && ExternalAIService.serviceActive) {
+    val model = selectedCatalogModel
+    val deletingActiveModel = RecommendedModels.findByUri(this, modelUri) == model
+    if (deletingActiveModel && ExternalAIService.serviceActive) {
       startService(Intent(this, ExternalAIService::class.java).setAction(ExternalAIService.ACTION_STOP))
     }
-    RecommendedModel.delete(this)
-    if (selectedRecommended) {
-      modelUri = null
-      preferences.edit().remove(KEY_MODEL_URI).apply()
+    RecommendedModels.delete(this, model)
+    if (deletingActiveModel) {
+      val fallback = RecommendedModels.firstInstalled(this)
+      modelUri = fallback?.let { Uri.fromFile(RecommendedModels.installedFile(this, it)) }
+      preferences.edit().apply {
+        if (modelUri == null) remove(KEY_MODEL_URI) else putString(KEY_MODEL_URI, modelUri.toString())
+      }.apply()
     }
     downloadingModel = false
     updateModelLabel()
-    status.text = "권장 모델 삭제 완료"
+    status.text = "${model.displayName} 삭제 완료"
+  }
+
+  private fun selectCatalogModel(model: VerifiedModelSpec) {
+    selectedCatalogModel = model
+    if (RecommendedModels.isInstalled(this, model)) {
+      modelUri = Uri.fromFile(RecommendedModels.installedFile(this, model))
+      preferences.edit().putString(KEY_MODEL_URI, modelUri.toString()).apply()
+      status.text = "${model.displayName} 선택됨 · 다음 시작부터 적용"
+      if (activityStarted && autoConnect.isChecked && !ExternalAIService.serviceActive) startClient(autoDiscover = true)
+    } else {
+      status.text = "${model.displayName}을 사용하려면 먼저 다운로드하세요."
+    }
+    updateModelLabel()
   }
 
   private fun startClient(autoDiscover: Boolean) {
@@ -363,8 +496,16 @@ class MainActivity : Activity() {
     modelUri = when {
       storedUri?.scheme == "file" && storedUri.path?.let(::File)?.isFile == true -> storedUri
       storedUri != null && storedUri.scheme != "file" -> storedUri
-      RecommendedModel.isInstalled(this) -> Uri.fromFile(RecommendedModel.installedFile(this))
+      RecommendedModels.firstInstalled(this) != null -> RecommendedModels.firstInstalled(this)?.let {
+        Uri.fromFile(RecommendedModels.installedFile(this, it))
+      }
       else -> null
+    }
+    RecommendedModels.findByUri(this, modelUri)?.let { activeModel ->
+      selectedCatalogModel = activeModel
+      suppressModelSelection = true
+      modelSelector.setSelection(RecommendedModels.ALL.indexOf(activeModel))
+      suppressModelSelection = false
     }
     updateModelLabel()
   }
@@ -382,25 +523,66 @@ class MainActivity : Activity() {
   }
 
   private fun updateModelLabel() {
-    val installed = RecommendedModel.isInstalled(this)
-    modelLabel.text = when {
-      isRecommendedModelUri(modelUri) && installed ->
-        "권장 모델 준비됨: ${RecommendedModel.DISPLAY_NAME}\nSHA-256 검증 버전: ${RecommendedModel.VERSION}"
-      modelUri != null -> "사용자 선택 모델: ${modelUri?.lastPathSegment ?: modelUri}"
-      installed -> "권장 모델 설치됨 · 사용하려면 권장 모델 버튼을 누르세요."
-      else -> "선택된 모델 없음 · 권장: YOLO11n 동적 FP32 · 기본 실행 320"
+    val selected = selectedCatalogModel
+    val active = RecommendedModels.findByUri(this, modelUri)
+    val selectedInstalled = RecommendedModels.isInstalled(this, selected)
+    val activeLabel = when {
+      active != null -> active.displayName
+      modelUri != null -> "사용자 ONNX: ${modelUri?.lastPathSegment ?: modelUri}"
+      else -> "없음"
     }
+    modelLabel.text = "현재 사용 모델: $activeLabel\n" +
+      "선택 모델: ${selected.displayName} · ${selected.profileLabel}\n" +
+      "COCO mAP50-95 ${selected.map5095} · ${selected.suggestedSettings}\n" +
+      "공식 동적 FP32 ONNX · SHA-256 고정 검증"
     downloadModelButton.text = when {
-      downloadingModel -> "권장 모델 다운로드 중"
-      installed -> "권장 모델 다시 다운로드"
-      else -> "권장 모델 다운로드 (YOLO11n 동적 · 10.4 MB)"
+      downloadingModel -> "모델 다운로드 중"
+      selectedInstalled -> "${selected.displayName} 다시 다운로드"
+      else -> "${selected.displayName} 다운로드 (${"%.1f".format(selected.sizeMegabytes)} MB)"
     }
     downloadModelButton.isEnabled = !downloadingModel
-    deleteModelButton.isEnabled = installed && !downloadingModel
+    modelSelector.isEnabled = !downloadingModel
+    deleteModelButton.isEnabled = selectedInstalled && !downloadingModel
   }
 
-  private fun isRecommendedModelUri(uri: Uri?): Boolean =
-    uri?.scheme == "file" && uri.path == RecommendedModel.installedFile(this).absolutePath
+  private fun appendAnalysisLog(entry: String) {
+    analysisEntries.addLast(entry)
+    while (analysisEntries.size > MAX_CONSOLE_ENTRIES) analysisEntries.removeFirst()
+    analysisConsole.text = analysisEntries.joinToString("\n\n")
+    analysisConsoleScroll.post { analysisConsoleScroll.fullScroll(View.FOCUS_DOWN) }
+  }
+
+  private fun clearAnalysisLog() {
+    analysisEntries.clear()
+    analysisConsole.text = CONSOLE_PLACEHOLDER
+  }
+
+  private fun updatePerformanceHud(intent: Intent) {
+    val model = intent.getStringExtra(ExternalAIService.EXTRA_MODEL_NAME) ?: "사용자 ONNX"
+    val videoFps = intent.getDoubleExtra(ExternalAIService.EXTRA_VIDEO_FPS, 0.0)
+    val aiFps = intent.getDoubleExtra(ExternalAIService.EXTRA_AI_FPS, 0.0)
+    val followRate = intent.getDoubleExtra(ExternalAIService.EXTRA_FOLLOW_RATE, 0.0)
+    val skippedFps = intent.getDoubleExtra(ExternalAIService.EXTRA_SKIPPED_FPS, 0.0)
+    val badge = intent.getStringExtra(ExternalAIService.EXTRA_ACCELERATOR_BADGE) ?: "대기"
+    performanceHud.text = "$model\n" +
+      "VIDEO ${"%.1f".format(videoFps)} FPS   AI ${"%.1f".format(aiFps)} FPS\n" +
+      "추종률 ${"%.0f".format(followRate)}%   SKIP ${"%.1f".format(skippedFps)}/s"
+    backendBadge.text = badge
+    backendBadge.background = roundedBackground(when (badge) {
+      "eNPU" -> Color.rgb(0, 145, 92)
+      "eACCEL" -> Color.rgb(214, 118, 0)
+      "eCPU" -> Color.rgb(79, 70, 229)
+      else -> Color.rgb(100, 116, 139)
+    }, 18f)
+  }
+
+  private fun roundedBackground(fillColor: Int, radiusDp: Float, strokeColor: Int? = null): GradientDrawable =
+    GradientDrawable().apply {
+      shape = GradientDrawable.RECTANGLE
+      setColor(fillColor)
+      cornerRadius = radiusDp * resources.displayMetrics.density
+      strokeColor?.let { setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), it) }
+    }
 
   private fun matchWidth() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
   private fun weighted() = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -417,6 +599,8 @@ class MainActivity : Activity() {
     private const val KEY_AUTO_CONNECT = "auto_connect"
     private const val REQUEST_MODEL = 10
     private const val REQUEST_NOTIFICATIONS = 11
+    private const val MAX_CONSOLE_ENTRIES = 40
+    private const val CONSOLE_PLACEHOLDER = "[대기] 연결 후 객체 분석 로그가 표시됩니다.\n시간 · 프레임 · 객체 · 신뢰도 · 픽셀 좌표"
   }
 }
 

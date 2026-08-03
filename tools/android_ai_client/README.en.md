@@ -10,11 +10,19 @@ This experimental app receives the default 854×480 hardware H.264 stream or com
 - Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.7.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.8.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
 
-No YOLO model is bundled in the APK. **The recommended first-test model is dynamic-input YOLO11n Detection, FP32 ONNX, with no embedded NMS.** Use 320 for performance-first testing, 416 for balance, and 640 only to compare small-object quality. A 320 input has one quarter of the pixels of 640, so establish sustained performance and heat at 320 first. A static model always uses its own fixed input regardless of the app selection. YOLO11s/m/l/x, YOLOv8, or a compatible custom model may also work but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
+No YOLO model is bundled in the APK. **The recommended first-test model is dynamic-input YOLO11n Detection, FP32 ONNX, with no embedded NMS.** The verified selector contains three official models.
 
-Press **권장 모델 다운로드** and review the Ultralytics model-license notice. The app downloads `yolo11n.onnx` directly from the official `ultralytics/assets` v8.4.0 Release. It pins the `10,930,182`-byte size and SHA-256 `634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b`, then verifies a dynamic FP32 input and conventional COCO YOLO output before moving the model into internal app storage. The official file metadata is `[-1,3,-1,-1] → [-1,84,-1]`; execution resolves it to the selected 320, 416, or 640 input. A failed or cancelled download removes its temporary file, and only a successful download becomes active. Uninstalling the app removes the internal model.
+| Model | Profile | COCO mAP50-95 | Download | First-test setting |
+|---|---|---:|---:|---|
+| YOLO11n | Speed | 39.5 | 10.4MB | 320, 10–15FPS |
+| YOLO11s | Balanced; flagship recommendation | 47.0 | 36.3MB | 320/416, 5–10FPS |
+| YOLO11m | Accuracy | 51.5 | 76.9MB | 320/416, 3–5FPS |
+
+Use 320 for performance-first testing, 416 for balance, and 640 only to compare small-object quality. A 320 input has one quarter of the pixels of 640, so establish sustained performance and heat at 320 first. All three files use dynamic float32 I/O while QNN and NNAPI may use FP16 internally. A static model always uses its own fixed input regardless of the app selection. YOLO11l/x, YOLOv8, or a compatible custom model may also work through manual selection but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
+
+Press **권장 모델 다운로드** for the selected YOLO11n/s/m model and review the Ultralytics model-license notice. Files come directly from the official `ultralytics/assets` v8.4.0 Release. YOLO11n pins `10,930,182` bytes and SHA-256 `634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b`; YOLO11s pins `38,051,729` bytes and `21d6650c5097610c92c76ce5e4b717976059169eaea4962035b90c6a92c07a8f`; YOLO11m pins `80,673,621` bytes and `8a37b5c53ff642831aa454156b548ec2cf2537827445385c3e1c1b276cb666a3`. The app also validates dynamic FP32 input and conventional COCO YOLO output before moving each file into internal storage. A failed or cancelled download removes its temporary file, and only a successful download becomes active.
 
 Use **다른 ONNX 파일 선택** when offline or when testing another compatible model. To create the recommended format on a PC, retain `nms=False` and `dynamic=False`:
 
@@ -44,7 +52,7 @@ That lightweight build shows `QNN/HTP runtime not included` at the top of the ap
 
 The app requests notification permission on Android 13 or newer. Android 12 and newer restrict arbitrary foreground-service launches from the background, so open the app once after a reboot. While active, a persistent notification provides status and a **중지** action.
 
-The first recommended-model download requires internet access and about 10.4MB of transfer. Keep the app open until it finishes. The verified model is reused from internal storage on later launches. **권장 모델 다시 다운로드** revalidates the pinned version, while **권장 모델 삭제** removes the internal file.
+A recommended-model download requires internet access and about 10.4–76.9MB of transfer. Keep the app open until it finishes. Verified models are reused from internal storage on later launches. The selected model's re-download button revalidates it, while **선택 모델 삭제** removes only that model.
 
 The current app targets SDK 35, so its `INTERNET` permission provides local TCP/UDP access. If the target SDK is raised to Android 17/API 37 or newer, add the `ACCESS_LOCAL_NETWORK` runtime-permission flow at the same time.
 
@@ -56,7 +64,7 @@ You do not need to find the device address manually when a phone hotspot assigns
 2. Set `ExternalAIEnabled=1` and the recommended H.264 option `ExternalAITransport=1` in Carrot Web. Object display also requires `ExternalAIShowOverlay=1`. End the current drive and start again after changing the transport.
 3. On a phone hotspot, set `ExternalAIPhoneIP` to the phone's hotspot gateway address. It may be left empty while testing if the address is unknown, but only on a trusted dedicated network.
 4. Put the C3/C3X/C4 on-road. `phoneaid` opens TCP frame port `7724` only while on-road.
-5. Press **권장 모델 다운로드** or use **다른 ONNX 파일 선택** for another compatible model. The recommended path automatically verifies integrity and ONNX input/output shapes.
+5. Select YOLO11n, YOLO11s, or YOLO11m and press **권장 모델 다운로드**, or use **다른 ONNX 파일 선택** for another compatible model. The recommended path automatically verifies integrity and ONNX input/output shapes.
 6. Leave **앱 실행 시 같은 망 자동 검색 및 시작** enabled. The app checks the saved address first, then probes only TCP `7724` in the local private IPv4 `/24` and accepts only a server whose first four bytes are JPEG `CAI1` or H.264 `CAI2`.
 7. When found, the app saves the device address and starts YOLO automatically. Confirm **연결됨** in the app and a green `eNPU` or blue `eCPU` badge on the C3X.
 
@@ -66,7 +74,9 @@ For a manual fallback, enter the current C3/C3X/C4 address under **기기 IP** a
 
 ## Performance measurement
 
-The app's **YOLO input size** defaults to 320, and the inference target is selectable from 1–20 FPS. Run 320 at 5 FPS for at least 15 minutes before raising the FPS or input to 416 or 640. The status view separates the rolling 120-sample average and p95 phone time, current H.264/JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. `Qualcomm QNN/HTP NPU (full graph, warmed)` confirms one successful inference on an HTP session with CPU fallback disabled. An `eNPU` paired with `NNAPI acceleration requested` only confirms that the NPU/DSP/GPU acceleration path was requested; it does not prove every operation ran on a physical NPU. If the status contains `QNN fallback`, record the following reason and evaluate the selected NNAPI or CPU path instead.
+The app's **YOLO input size** defaults to 320, and the inference target is selectable from 1–20 FPS. Run 320 at 5 FPS for at least 15 minutes before raising the FPS or input to 416 or 640. The central HUD derives `VIDEO FPS` from C3X source-frame timestamps, shows measured model `AI FPS`, calculates `follow rate` as AI FPS divided by VIDEO FPS, and reports their difference as `SKIP/s`. This avoids falsely reporting 100% when the phone processing loop itself is slow. The live console keeps the newest 40 analysis entries with wall time, frame ID, object name, confidence, and source-image box and center pixel coordinates. Object names use Korean plus the original COCO label when Android's system language is Korean, and the COCO English label otherwise.
+
+The status view separates the rolling 120-sample average and p95 phone time, current H.264/JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. The app lights green `eNPU` only after a full-graph Qualcomm QNN/HTP session with CPU fallback disabled completes its warm-up inference. NNAPI success is shown as amber `eACCEL` because it does not prove which physical accelerator ran the graph; CPU fallback is purple `eCPU`. If the status contains `QNN fallback`, record the following reason and evaluate the selected NNAPI or CPU path instead.
 
 - A large `ORT` value indicates a model or acceleration-backend bottleneck; stay at 320 and check for CPU fallback.
 - A large `total latency - phone time` indicates C3X encoding, Wi-Fi, or return-path delay.
@@ -88,4 +98,4 @@ TCP frames use a 12-byte network-order prefix. JPEG `CAI1` carries JSON-header a
 
 TCP/UDP traffic is not encrypted, and discovery is not authentication. Do not expose these ports on a public or untrusted network.
 
-The recommended model comes directly from `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx` over HTTPS and is installed only after both the pinned SHA-256 and ONNX structure match. Integrity verification does not replace the model license.
+The recommended models come directly from `yolo11n.onnx`, `yolo11s.onnx`, and `yolo11m.onnx` under `https://github.com/ultralytics/assets/releases/download/v8.4.0/`. Installation requires matching pinned file size, SHA-256, and ONNX structure. Integrity verification does not replace the model license.
