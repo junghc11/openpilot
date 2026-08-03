@@ -115,6 +115,8 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
     assert f'expectedSha256 = "{model["sha256"]}"' in downloader
 
   assert "val DEFAULT = YOLO11N_QDQ_320" in downloader
+  assert downloader.count("https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/") == 2
+  assert "raw.githubusercontent.com/junghc11/openpilot/external-android-ai/" not in downloader
   assert "fixedInputSize = 320" in downloader
   assert "fixedInputSize = 640" in downloader
   assert downloader.count("qnnOptimized = true") == 2
