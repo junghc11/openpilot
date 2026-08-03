@@ -315,8 +315,14 @@ class ExternalAIService : Service() {
       "폰 처리 평균 ${"%.1f".format(performance.averagePhoneTotalMs)} · p95 ${"%.1f".format(performance.p95PhoneTotalMs)} ms\n" +
       "$transportLabel 디코드 ${"%.1f".format(performance.averageDecodeMs)} · 전처리 ${"%.1f".format(performance.averagePreprocessMs)} · ORT ${"%.1f".format(performance.averageRuntimeMs)} · 후처리 ${"%.1f".format(performance.averagePostprocessMs)} ms\n" +
       "객체 ${objectCount}개 · 표본 ${performance.samples}개\n" +
+      "기기 ${deviceSummary()}\n" +
       "백엔드 $backendLabel · 배터리 ${"%.1f".format(batteryTemp)}°C\n" +
       "열 상태 ${thermalStatusLabel(thermalStatus)}($thermalStatus) · 총 지연은 C3X에서 측정"
+  }
+
+  private fun deviceSummary(): String {
+    val soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else Build.HARDWARE
+    return "${Build.MANUFACTURER} ${Build.MODEL} · SoC ${soc.ifBlank { "알 수 없음" }}"
   }
 
   private fun buildAnalysisLog(

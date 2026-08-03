@@ -55,6 +55,8 @@ def test_android_client_uses_fixed_or_dynamic_low_resolution_and_stage_metrics()
   assert "RollingPerformanceStats()" in service
   assert "p95PhoneTotalMs" in service
   assert "thermalStatusLabel" in service
+  assert "Build.SOC_MODEL" in service
+  assert "기기 ${deviceSummary()}" in service
   for field in ("decode_ms", "preprocess_ms", "runtime_ms", "postprocess_ms", "phone_total_ms", "input_width", "input_height"):
     assert f'put("{field}"' in protocol
   assert "capacity: Int = 120" in stats
