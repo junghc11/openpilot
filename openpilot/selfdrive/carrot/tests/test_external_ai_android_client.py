@@ -61,7 +61,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.8.0"' in gradle
+  assert 'versionName = "0.8.1"' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
@@ -141,6 +141,23 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   assert "Locale.getDefault().language != Locale.KOREAN.language" in service
   for field in ("frame=", "box=", "center=", "confidence * 100f"):
     assert field in service
+
+
+def test_android_client_copies_safe_c3x_branch_ssh_command() -> None:
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+
+  assert "C3X 브랜치 변경 SSH 명령 복사" in activity
+  assert "ClipboardManager::class.java" in activity
+  assert "ClipData.newPlainText" in activity
+  assert 'SSH_USER = "comma"' in activity
+  assert 'OPENPILOT_PATH = "/data/openpilot"' in activity
+  assert 'DEPLOY_REPOSITORY_URL = "https://github.com/junghc11/openpilot.git"' in activity
+  assert 'DEPLOY_BRANCH = "external-android-ai"' in activity
+  assert "git switch --track -c" in activity
+  assert "git pull --ff-only" in activity
+  assert "git rev-parse --short HEAD" in activity
+  assert "isValidIpv4Address(targetHost)" in activity
+  assert "reset --hard" not in activity
 
 
 def test_android_discovery_is_bounded_to_private_subnets_and_carrot_port() -> None:

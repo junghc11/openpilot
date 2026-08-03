@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -179,6 +181,16 @@ class MainActivity : Activity() {
     root.addView(autoConnect, matchWidth())
 
     host = addField(root, "기기 IP (수동 연결 또는 최근 검색값)", "192.168.0.10")
+    root.addView(Button(this).apply {
+      text = "C3X 브랜치 변경 SSH 명령 복사"
+      setOnClickListener { copyC3xBranchSshCommand() }
+    }, matchWidth())
+    root.addView(TextView(this).apply {
+      text = "현재 기기 IP를 사용합니다. 주차·주행 종료 상태에서 SSH 가능한 PC 또는 Android 터미널에 붙여넣으세요."
+      textSize = 12f
+      setTextColor(Color.rgb(74, 85, 104))
+      setPadding(0, 0, 0, (10 * density).toInt())
+    })
     framePort = addField(root, "영상 TCP 포트", "7724")
     resultPort = addField(root, "결과 UDP 포트", "7725")
     threshold = addField(root, "신뢰도 임계값 (0.1~0.95)", "0.35")
@@ -355,6 +367,33 @@ class MainActivity : Activity() {
     }
     @Suppress("DEPRECATION")
     startActivityForResult(intent, REQUEST_MODEL)
+  }
+
+  private fun copyC3xBranchSshCommand() {
+    val targetHost = host.text.toString().trim()
+    if (!isValidIpv4Address(targetHost)) {
+      Toast.makeText(this, "먼저 올바른 C3/C3X/C4 IPv4 주소를 입력하거나 자동 검색하세요.", Toast.LENGTH_LONG).show()
+      return
+    }
+    val command = buildC3xBranchSshCommand(targetHost)
+    getSystemService(ClipboardManager::class.java).setPrimaryClip(
+      ClipData.newPlainText("CarrotPilot external-android-ai SSH command", command),
+    )
+    status.text = "SSH 브랜치 변경 명령을 복사했습니다. 완료 후 C3/C3X/C4를 재부팅하세요."
+    Toast.makeText(this, "SSH 명령을 클립보드에 복사했습니다.", Toast.LENGTH_LONG).show()
+  }
+
+  private fun buildC3xBranchSshCommand(targetHost: String): String =
+    "ssh $SSH_USER@$targetHost \"cd $OPENPILOT_PATH && " +
+      "git fetch $DEPLOY_REPOSITORY_URL $DEPLOY_BRANCH:refs/remotes/$DEPLOY_REMOTE_REF/$DEPLOY_BRANCH && " +
+      "(git switch $DEPLOY_BRANCH || git switch --track -c $DEPLOY_BRANCH $DEPLOY_REMOTE_REF/$DEPLOY_BRANCH) && " +
+      "git pull --ff-only $DEPLOY_REPOSITORY_URL $DEPLOY_BRANCH && git rev-parse --short HEAD\""
+
+  private fun isValidIpv4Address(value: String): Boolean {
+    val octets = value.split('.')
+    return octets.size == 4 && octets.all { octet ->
+      octet.isNotEmpty() && octet.length <= 3 && octet.all(Char::isDigit) && octet.toInt() in 0..255
+    }
   }
 
   private fun confirmSelectedModelDownload() {
@@ -601,6 +640,11 @@ class MainActivity : Activity() {
     private const val REQUEST_NOTIFICATIONS = 11
     private const val MAX_CONSOLE_ENTRIES = 40
     private const val CONSOLE_PLACEHOLDER = "[대기] 연결 후 객체 분석 로그가 표시됩니다.\n시간 · 프레임 · 객체 · 신뢰도 · 픽셀 좌표"
+    private const val SSH_USER = "comma"
+    private const val OPENPILOT_PATH = "/data/openpilot"
+    private const val DEPLOY_REPOSITORY_URL = "https://github.com/junghc11/openpilot.git"
+    private const val DEPLOY_BRANCH = "external-android-ai"
+    private const val DEPLOY_REMOTE_REF = "junghc11"
   }
 }
 

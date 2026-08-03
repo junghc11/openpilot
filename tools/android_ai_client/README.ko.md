@@ -10,7 +10,7 @@
 - 표준 Ultralytics YOLOv8/YOLO11 출력 `[1, 84, N]` 또는 `[1, N, 84]`
 - person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign COCO 클래스
 
-NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. v0.8.0 기본 APK는 공식 ONNX Runtime QNN AAR과 Qualcomm QNN Runtime을 포함합니다. 먼저 HTP에서 전체 그래프를 열고, 한 연산이라도 CPU가 필요하면 `session.disable_cpu_ep_fallback=1`에 의해 QNN 세션을 거부한 뒤 NNAPI, 마지막으로 CPU 순서로 폴백합니다. NNAPI 세션은 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. NNAPI가 선택되면 지원되는 그래프가 NPU·DSP·GPU와 ORT CPU에 혼합 배치될 수 있습니다.
+NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. v0.8.1 기본 APK는 공식 ONNX Runtime QNN AAR과 Qualcomm QNN Runtime을 포함합니다. 먼저 HTP에서 전체 그래프를 열고, 한 연산이라도 CPU가 필요하면 `session.disable_cpu_ep_fallback=1`에 의해 QNN 세션을 거부한 뒤 NNAPI, 마지막으로 CPU 순서로 폴백합니다. NNAPI 세션은 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. NNAPI가 선택되면 지원되는 그래프가 NPU·DSP·GPU와 ORT CPU에 혼합 배치될 수 있습니다.
 
 YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 동적 입력 `YOLO11n Detection`, FP32 ONNX, 모델 내 NMS 미포함**입니다. 앱의 선택 목록에는 공식 검증 모델 3개가 있습니다.
 
@@ -55,6 +55,12 @@ Android 13 이상에서는 알림 권한을 요청합니다. Android 12 이상�
 권장 모델 다운로드에는 인터넷 연결과 모델에 따라 약 10.4~76.9MB의 전송량이 필요합니다. 다운로드 중에는 앱을 닫지 마세요. 설치가 끝나면 모델은 내부 저장소에서 재사용되므로 다음 실행부터 다시 받을 필요가 없습니다. 선택 모델의 **다시 다운로드**로 고정 버전을 재검증할 수 있고 **선택 모델 삭제**로 해당 내부 파일만 제거할 수 있습니다.
 
 현재 앱은 target SDK 35이므로 `INTERNET` 권한으로 로컬 TCP/UDP에 접근합니다. 향후 target SDK를 Android 17/API 37 이상으로 올릴 때는 `ACCESS_LOCAL_NETWORK` 런타임 권한 처리를 함께 추가해야 합니다.
+
+## C3/C3X/C4 브랜치 변경 명령 복사
+
+앱의 **C3X 브랜치 변경 SSH 명령 복사**를 누르면 현재 **기기 IP**를 넣은 한 줄 명령이 클립보드에 저장됩니다. 자동 검색이 완료됐다면 검색된 주소가 사용됩니다. 주차하고 주행을 끝낸 뒤 SSH가 설치된 PC PowerShell, 터미널 또는 Android 터미널 앱에 붙여넣으세요.
+
+명령은 `/data/openpilot`에서 `junghc11/openpilot`의 `external-android-ai`를 직접 가져옵니다. 기존 브랜치가 있으면 전환하고, 없으면 추적 브랜치를 생성한 뒤 `git pull --ff-only`로 갱신합니다. `reset --hard`나 로컬 파일 삭제, 자동 재부팅은 수행하지 않습니다. 로컬 변경 때문에 전환 또는 갱신이 안전하지 않으면 Git이 중단합니다. 성공 후 표시되는 짧은 커밋 ID를 확인하고 C3/C3X/C4를 직접 재부팅하세요.
 
 ## C3/C3X/C4 자동 연결
 

@@ -10,7 +10,7 @@ This experimental app receives the default 854×480 hardware H.264 stream or com
 - Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.8.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.8.1 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
 
 No YOLO model is bundled in the APK. **The recommended first-test model is dynamic-input YOLO11n Detection, FP32 ONNX, with no embedded NMS.** The verified selector contains three official models.
 
@@ -55,6 +55,12 @@ The app requests notification permission on Android 13 or newer. Android 12 and 
 A recommended-model download requires internet access and about 10.4–76.9MB of transfer. Keep the app open until it finishes. Verified models are reused from internal storage on later launches. The selected model's re-download button revalidates it, while **선택 모델 삭제** removes only that model.
 
 The current app targets SDK 35, so its `INTERNET` permission provides local TCP/UDP access. If the target SDK is raised to Android 17/API 37 or newer, add the `ACCESS_LOCAL_NETWORK` runtime-permission flow at the same time.
+
+## Copying the C3/C3X/C4 branch deployment command
+
+Press **C3X 브랜치 변경 SSH 명령 복사** to copy a one-line SSH command containing the current **기기 IP**. After automatic discovery, the discovered address is used. Park and end the drive before pasting it into PC PowerShell, a terminal, or an Android terminal app with SSH installed.
+
+The command fetches `external-android-ai` directly from `junghc11/openpilot` under `/data/openpilot`. It switches to an existing branch or creates a tracking branch, then updates it with `git pull --ff-only`. It does not run `reset --hard`, delete local files, or reboot automatically. Git stops if local changes make the switch or fast-forward unsafe. Verify the short commit ID printed on success, then reboot the C3/C3X/C4 yourself.
 
 ## Automatic C3/C3X/C4 pairing
 
