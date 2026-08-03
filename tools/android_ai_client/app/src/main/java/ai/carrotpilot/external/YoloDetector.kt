@@ -36,6 +36,8 @@ class YoloDetector(
   modelFile: File,
   private val confidenceThreshold: Float,
   requestedInputSize: Int,
+  private val tryQnn: Boolean = true,
+  private val qnnSkipReason: String = "",
 ) : Closeable {
   private val dynamicInputSize = requestedInputSize.also {
     require(it in SUPPORTED_INPUT_SIZES) {
@@ -193,11 +195,12 @@ class YoloDetector(
   }
 
   private fun createPreferredSession(modelFile: File): SessionSetup {
-    val qnnAttempt = if (BuildConfig.QNN_EP_INCLUDED) tryCreateQnnSession(modelFile) else null
+    val qnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) tryCreateQnnSession(modelFile) else null
     qnnAttempt?.setup?.let { return it }
     val qnnFallback = when {
+      !tryQnn -> qnnSkipReason.ifBlank { "QNN 건너뜀: CPU 호환 모델" }
       !BuildConfig.QNN_EP_INCLUDED -> "QNN EP 미포함 빌드"
-      qnnAttempt?.error != null -> "QNN 폴백: ${shortError(qnnAttempt.error)}"
+      qnnAttempt?.error != null -> qnnErrorLabel(qnnAttempt.error)
       else -> ""
     }
 
@@ -223,7 +226,11 @@ class YoloDetector(
           options = cpuOptions,
           session = createAndWarmSession(modelFile, cpuOptions),
           backend = "onnxruntime-cpu-fallback",
-          backendLabel = listOf("ONNX Runtime CPU(NNAPI 사용 불가)", qnnFallback)
+          backendLabel = listOf(
+            "ONNX Runtime CPU",
+            "NNAPI 폴백: ${shortError(nnapiError)}",
+            qnnFallback,
+          )
             .filter(String::isNotBlank)
             .joinToString(" · "),
         )
@@ -302,6 +309,17 @@ class YoloDetector(
 
   private fun shortError(error: Throwable): String =
     (error.message ?: error.javaClass.simpleName).lineSequence().first().take(120)
+
+  private fun qnnErrorLabel(error: Throwable): String {
+    val message = error.message.orEmpty()
+    val reason = when {
+      message.contains("default CPU EP", ignoreCase = true) -> "모델 그래프 일부 HTP 미지원"
+      message.contains("dynamic", ignoreCase = true) -> "동적 shape 미지원"
+      message.contains("backend", ignoreCase = true) -> "QNN HTP 백엔드 초기화 실패"
+      else -> "QNN 세션 생성 실패"
+    }
+    return "QNN 폴백: $reason (${shortError(error)})"
+  }
 
   private data class PreparedInput(
     val tensor: FloatBuffer,

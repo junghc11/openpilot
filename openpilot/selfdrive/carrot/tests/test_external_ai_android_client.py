@@ -1,9 +1,12 @@
+import hashlib
+import json
 from pathlib import Path
 
 
 OPENPILOT_ROOT = Path(__file__).resolve().parents[3]
 ANDROID_ROOT = OPENPILOT_ROOT.parent / "tools" / "android_ai_client"
 JAVA_ROOT = ANDROID_ROOT / "app" / "src" / "main" / "java" / "ai" / "carrotpilot" / "external"
+MODELS_ROOT = ANDROID_ROOT / "models"
 
 
 def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
@@ -12,10 +15,15 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   manifest = (ANDROID_ROOT / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
 
   assert "앱 실행 시 같은 망 자동 검색 및 시작" in activity
+  for tab in ('"상태"', '"모델"', '"로그"'):
+    assert tab in activity
+  assert "연결 관리" in activity
+  assert "최근 5개 분석" in activity
+  assert "FRAME FOLLOW" in activity
   assert "권장 모델 선택" in activity
   assert "RecommendedModels.ALL.map" in activity
   assert "선택 모델 삭제" in activity
-  assert "YOLO 입력 크기 (320/416/640 · 권장 320)" in activity
+  assert "YOLO 입력 크기 (NPU 모델은 자동 고정)" in activity
   assert "다른 ONNX 파일 선택" in activity
   assert "동의 후 다운로드" in activity
   assert "autoConnect.isChecked && modelUri != null && !ExternalAIService.serviceActive" in activity
@@ -27,7 +35,7 @@ def test_android_app_auto_discovers_on_launch_with_manual_fallback() -> None:
   assert "RECEIVE_BOOT_COMPLETED" not in manifest
 
 
-def test_android_client_uses_dynamic_low_resolution_and_stage_metrics() -> None:
+def test_android_client_uses_fixed_or_dynamic_low_resolution_and_stage_metrics() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
@@ -61,7 +69,8 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.8.1"' in gradle
+  assert 'versionName = "0.10.0"' in gradle
+  assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
@@ -84,6 +93,37 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'input.shape[2] in longArrayOf(-1, 320, 416, 640)' in detector
 
 
+def test_android_qnn_models_are_static_pinned_and_default() -> None:
+  downloader = (JAVA_ROOT / "RecommendedModel.kt").read_text(encoding="utf-8")
+  activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+  service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
+  manifest = json.loads((MODELS_ROOT / "manifest.json").read_text(encoding="utf-8"))
+
+  assert manifest["source_sha256"] == "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b"
+  assert [model["input_size"] for model in manifest["models"]] == [320, 640]
+  for model in manifest["models"]:
+    path = MODELS_ROOT / model["file"]
+    assert path.stat().st_size == model["size"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == model["sha256"]
+    assert model["activation_type"] == "QUInt16"
+    assert model["weight_type"] == "QUInt8"
+    assert model["calibration_images"] == 128
+    assert model["validation"]["input_shape"] == [1, 3, model["input_size"], model["input_size"]]
+    assert not {"ConstantOfShape", "Range", "Shape"}.intersection(model["validation"]["operator_types"])
+    assert model["validation"]["outputs"][0]["normalized_rmse"] < 0.06
+    assert f'expectedSize = {model["size"]:_}L' in downloader
+    assert f'expectedSha256 = "{model["sha256"]}"' in downloader
+
+  assert "val DEFAULT = YOLO11N_QDQ_320" in downloader
+  assert "fixedInputSize = 320" in downloader
+  assert "fixedInputSize = 640" in downloader
+  assert downloader.count("qnnOptimized = true") == 2
+  assert "applyModelInputPolicy" in activity
+  assert "activeModel?.fixedInputSize" in activity
+  assert "tryQnn = modelSpec?.qnnOptimized != false" in service
+  assert "Dynamic FP32 CPU 호환 모델" in service
+
+
 def test_android_recommended_model_download_is_pinned_and_validated() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   downloader = (JAVA_ROOT / "RecommendedModel.kt").read_text(encoding="utf-8")
@@ -98,7 +138,7 @@ def test_android_recommended_model_download_is_pinned_and_validated() -> None:
     assert f"/v8.4.0/{name}.onnx" in downloader
     assert f"expectedSize = {size}" in downloader
     assert f'expectedSha256 = "{sha256}"' in downloader
-  assert "val ALL = listOf(YOLO11N, YOLO11S, YOLO11M)" in downloader
+  assert "YOLO11N_QDQ_320, YOLO11N_QDQ_640, YOLO11N, YOLO11S, YOLO11M" in downloader
   assert 'require(sourceUrl.protocol == "https")' in downloader
   assert "connection.responseCode == HttpURLConnection.HTTP_OK" in downloader
   assert "received <= model.expectedSize" in downloader
@@ -124,9 +164,9 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
   style = (ANDROID_ROOT / "app" / "src" / "main" / "res" / "values" / "styles.xml").read_text(encoding="utf-8")
 
-  for text in ("실시간 프레임 추종", "VIDEO -- FPS", "AI -- FPS", "추종률 --%", "SKIP --/s", "실시간 객체 분석 콘솔"):
+  for text in ("VIDEO FPS", "AI FPS", "FRAME FOLLOW", "SKIP", "실시간 객체 분석", "recentDetectionPreview"):
     assert text in activity
-  assert "Color.rgb(247, 249, 252)" in activity
+  assert "Color.rgb(250, 249, 247)" in activity
   assert "android:windowLightStatusBar\">true" in style
   assert "ACTION_ANALYSIS" in activity and "ACTION_METRICS" in activity
   assert "ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L" in service
@@ -153,8 +193,9 @@ def test_android_client_copies_safe_c3x_branch_ssh_command() -> None:
   assert 'OPENPILOT_PATH = "/data/openpilot"' in activity
   assert 'DEPLOY_REPOSITORY_URL = "https://github.com/junghc11/openpilot.git"' in activity
   assert 'DEPLOY_BRANCH = "external-android-ai"' in activity
-  assert "git switch --track -c" in activity
-  assert "git pull --ff-only" in activity
+  assert "git show-ref --verify --quiet refs/heads/" in activity
+  assert "git merge --ff-only FETCH_HEAD" in activity
+  assert "git switch -c $DEPLOY_BRANCH FETCH_HEAD" in activity
   assert "git rev-parse --short HEAD" in activity
   assert "isValidIpv4Address(targetHost)" in activity
   assert "reset --hard" not in activity
@@ -218,15 +259,15 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
   assert "README.en.md" in index
   for text in (
     "앱의 **권장 모델 다운로드**",
-    "첫 시험 권장 모델은 동적 입력 `YOLO11n Detection`",
-    "기본 320은 성능 우선",
+    "첫 시험 권장 모델은 `YOLO11n NPU W8A16 · 320`",
+    "입력 픽셀 수는 320이 640의 1/4",
     "전화 처리 평균과 p95",
     "NCHW 강제 옵션",
     "QNN/HTP 전체 그래프",
     "session.disable_cpu_ep_fallback",
     "carrotQnnEnabled=false",
     "공식 `ultralytics/assets` v8.4.0 Release",
-    "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
+    "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
     "AGPL-3.0 또는 Enterprise",
     "nms=False dynamic=False batch=1",
     "같은 사설 IPv4 `/24`",
@@ -238,15 +279,15 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     assert text in readme_ko
   for text in (
     "Press **권장 모델 다운로드**",
-    "recommended first-test model is dynamic-input YOLO11n Detection",
-    "Use 320 for performance-first testing",
+    "recommended first-test model is `YOLO11n NPU W8A16 · 320`",
+    "A 320 input has one quarter of the pixels of 640",
     "average and p95 phone time",
     "does not force the potentially slower NCHW option",
     "Full-graph Qualcomm QNN/HTP",
     "session.disable_cpu_ep_fallback",
     "carrotQnnEnabled=false",
     "official `ultralytics/assets` v8.4.0 Release",
-    "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
+    "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
     "AGPL-3.0 or Enterprise",
     "nms=False dynamic=False batch=1",
     "local private IPv4 `/24`",

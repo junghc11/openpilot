@@ -75,7 +75,8 @@ class ExternalAIService : Service() {
 
   private fun runClient(config: ServiceConfig, token: AtomicBoolean) {
     val modelName = config.modelUri.lastPathSegment ?: "yolo.onnx"
-    val modelDisplayName = RecommendedModels.findByUri(this, config.modelUri)?.displayName ?: modelName
+    val modelSpec = RecommendedModels.findByUri(this, config.modelUri)
+    val modelDisplayName = modelSpec?.displayName ?: modelName
     var retryDelayMs = MIN_RETRY_DELAY_MS
     var discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
     var detector: YoloDetector? = null
@@ -102,7 +103,17 @@ class ExternalAIService : Service() {
 
         val activeDetector = detector ?: try {
           updateStatus("기기 발견: $targetHost\nYOLO 모델 준비 중", targetHost)
-          YoloDetector(copyModelToCache(config.modelUri), config.threshold, config.inputSize).also { detector = it }
+          YoloDetector(
+            copyModelToCache(config.modelUri),
+            config.threshold,
+            config.inputSize,
+            tryQnn = modelSpec?.qnnOptimized != false,
+            qnnSkipReason = if (modelSpec?.qnnOptimized == false) {
+              "QNN 건너뜀: Dynamic FP32 CPU 호환 모델"
+            } else {
+              ""
+            },
+          ).also { detector = it }
         } catch (error: Exception) {
           updateStatus("YOLO 모델 열기 실패\n${error.message}")
           token.set(false)

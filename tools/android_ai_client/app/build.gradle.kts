@@ -6,6 +6,7 @@ plugins {
 val qnnEpIncluded = providers.gradleProperty("carrotQnnEnabled")
   .map { it.toBooleanStrict() }
   .getOrElse(true)
+val targetAbi = providers.gradleProperty("carrotTargetAbi").getOrElse("arm64-v8a")
 
 android {
   namespace = "ai.carrotpilot.external"
@@ -15,11 +16,11 @@ android {
     applicationId = "ai.carrotpilot.external"
     minSdk = 29
     targetSdk = 35
-    versionCode = 10
-    versionName = "0.8.1"
+    versionCode = 13
+    versionName = "0.10.0"
     buildConfigField("boolean", "QNN_EP_INCLUDED", qnnEpIncluded.toString())
     ndk {
-      abiFilters += "arm64-v8a"
+      abiFilters += targetAbi
     }
   }
 

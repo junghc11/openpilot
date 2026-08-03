@@ -16,30 +16,67 @@ data class VerifiedModelSpec(
   val id: String,
   val displayName: String,
   val profileLabel: String,
-  val map5095: Double,
+  val map5095: Double?,
   val suggestedSettings: String,
+  val formatLabel: String,
   val downloadUrl: String,
   val expectedSize: Long,
   val expectedSha256: String,
   val fileName: String,
+  val fixedInputSize: Int? = null,
+  val qnnOptimized: Boolean = false,
 ) {
   val sizeMegabytes: Double
     get() = expectedSize / 1_048_576.0
 
   val selectorLabel: String
     get() = "$displayName · $profileLabel · ${"%.1f".format(sizeMegabytes)} MB"
+
+  val accuracyLabel: String
+    get() = map5095?.let { "COCO mAP50-95 $it" } ?: "양자화 정확도 실기 검증 중"
 }
 
 object RecommendedModels {
-  const val VERSION = "Ultralytics assets v8.4.0"
+  const val VERSION = "CarrotPilot QDQ v1 / Ultralytics assets v8.4.0"
   const val LICENSE_URL = "https://www.ultralytics.com/license"
+
+  val YOLO11N_QDQ_320 = VerifiedModelSpec(
+    id = "yolo11n_qdq_320",
+    displayName = "YOLO11n NPU W8A16 · 320",
+    profileLabel = "NPU 속도 권장",
+    map5095 = null,
+    suggestedSettings = "고정 입력 320 · 목표 10~15 FPS",
+    formatLabel = "Static QDQ · W8A16 · QNN/HTP 우선",
+    downloadUrl = "https://raw.githubusercontent.com/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-320-w8a16-qdq.onnx",
+    expectedSize = 3_047_718L,
+    expectedSha256 = "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
+    fileName = "yolo11n-static-320-w8a16-qdq.onnx",
+    fixedInputSize = 320,
+    qnnOptimized = true,
+  )
+
+  val YOLO11N_QDQ_640 = VerifiedModelSpec(
+    id = "yolo11n_qdq_640",
+    displayName = "YOLO11n NPU W8A16 · 640",
+    profileLabel = "NPU 고화질",
+    map5095 = null,
+    suggestedSettings = "고정 입력 640 · 목표 5~10 FPS",
+    formatLabel = "Static QDQ · W8A16 · QNN/HTP 우선",
+    downloadUrl = "https://raw.githubusercontent.com/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-640-w8a16-qdq.onnx",
+    expectedSize = 3_085_627L,
+    expectedSha256 = "b4bdd62de9f07e9b29fd08f3482719d650c853cdfa7230e589770105361259fd",
+    fileName = "yolo11n-static-640-w8a16-qdq.onnx",
+    fixedInputSize = 640,
+    qnnOptimized = true,
+  )
 
   val YOLO11N = VerifiedModelSpec(
     id = "yolo11n",
     displayName = "YOLO11n Dynamic FP32",
-    profileLabel = "속도 우선",
+    profileLabel = "CPU 호환 · 속도 우선",
     map5095 = 39.5,
-    suggestedSettings = "입력 320 · 목표 10~15 FPS",
+    suggestedSettings = "입력 320 · 목표 5~10 FPS",
+    formatLabel = "Dynamic FP32 · CPU/NNAPI 호환",
     downloadUrl = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx",
     expectedSize = 10_930_182L,
     expectedSha256 = "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
@@ -49,9 +86,10 @@ object RecommendedModels {
   val YOLO11S = VerifiedModelSpec(
     id = "yolo11s",
     displayName = "YOLO11s Dynamic FP32",
-    profileLabel = "균형형 · 플래그십 권장",
+    profileLabel = "CPU 호환 · 균형형",
     map5095 = 47.0,
-    suggestedSettings = "입력 320/416 · 목표 5~10 FPS",
+    suggestedSettings = "입력 320/416 · 목표 3~5 FPS",
+    formatLabel = "Dynamic FP32 · CPU/NNAPI 호환",
     downloadUrl = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11s.onnx",
     expectedSize = 38_051_729L,
     expectedSha256 = "21d6650c5097610c92c76ce5e4b717976059169eaea4962035b90c6a92c07a8f",
@@ -61,17 +99,18 @@ object RecommendedModels {
   val YOLO11M = VerifiedModelSpec(
     id = "yolo11m",
     displayName = "YOLO11m Dynamic FP32",
-    profileLabel = "정확도 우선",
+    profileLabel = "CPU 호환 · 정확도 우선",
     map5095 = 51.5,
-    suggestedSettings = "입력 320/416 · 목표 3~5 FPS",
+    suggestedSettings = "입력 320 · 목표 2~3 FPS",
+    formatLabel = "Dynamic FP32 · CPU/NNAPI 호환",
     downloadUrl = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11m.onnx",
     expectedSize = 80_673_621L,
     expectedSha256 = "8a37b5c53ff642831aa454156b548ec2cf2537827445385c3e1c1b276cb666a3",
     fileName = "yolo11m-v8.4.0-640-fp32.onnx",
   )
 
-  val ALL = listOf(YOLO11N, YOLO11S, YOLO11M)
-  val DEFAULT = YOLO11N
+  val ALL = listOf(YOLO11N_QDQ_320, YOLO11N_QDQ_640, YOLO11N, YOLO11S, YOLO11M)
+  val DEFAULT = YOLO11N_QDQ_320
 
   fun installedFile(context: Context, model: VerifiedModelSpec): File =
     File(File(context.filesDir, "models"), model.fileName)
