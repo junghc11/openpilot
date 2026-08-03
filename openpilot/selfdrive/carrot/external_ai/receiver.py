@@ -97,7 +97,7 @@ class ExternalAIUdpReceiver:
     self.socket.settimeout(timeout_s)
     try:
       payload, sender = self.socket.recvfrom(MAX_DATAGRAM_BYTES)
-    except (BlockingIOError, TimeoutError, socket.timeout):
+    except (BlockingIOError, TimeoutError):
       return None
 
     sender_ip = sender[0]

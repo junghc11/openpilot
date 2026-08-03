@@ -81,7 +81,10 @@ def test_c3x_overlay_defaults_to_english_object_names() -> None:
 @pytest.mark.parametrize("language", SUPPORTED_LANGUAGES)
 def test_c3x_object_names_are_translated_for_every_supported_language(language: str) -> None:
   translations = _translations(language)
-  translate = lambda text: translations.get(text, text) or text
+
+  def translate(text: str) -> str:
+    return translations.get(text, text) or text
+
   localized_names = {external_ai_display_name(class_name, translate=translate) for class_name in DISPLAY_NAME_KEYS}
   assert len(localized_names) == len(DISPLAY_NAME_KEYS)
   assert all(translations.get(key) for key in DISPLAY_NAME_KEYS.values())
