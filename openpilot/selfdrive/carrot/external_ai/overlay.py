@@ -154,8 +154,10 @@ def phone_ai_status_text(
     return "외부 AI · 시작 대기", False
   if not service_valid or state is None:
     return "외부 AI · 상태 확인 중", False
-  if not bool(_field(state, "connected", False)) or not bool(_field(state, "valid", False)):
+  if not bool(_field(state, "connected", False)):
     return "외부 AI · 스마트폰 연결 대기", False
+  if not bool(_field(state, "valid", False)):
+    return "외부 AI · 연결됨 · 분석 대기", True
 
   backend_value = str(_field(state, "backend", "") or "").strip().lower()
   backend = BACKEND_DISPLAY_NAMES.get(backend_value, backend_value.upper() or "연산 중")

@@ -94,7 +94,11 @@ class PhoneAIDaemon:
     now_ns = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
     result = self.receiver.tracker.fresh_result(now_monotonic_ns=now_ns)
     stats = self.receiver.stats(now_monotonic_ns=now_ns)
-    payload = build_phone_ai_payload(result, stats)
+    payload = build_phone_ai_payload(
+      result,
+      stats,
+      frame_connected=self.frame_server.stats().connected,
+    )
     message = self.messaging.new_message("phoneAIState", valid=True)
     message.phoneAIState = payload
     self.pm.send("phoneAIState", message)

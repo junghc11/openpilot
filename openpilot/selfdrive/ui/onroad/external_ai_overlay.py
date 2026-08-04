@@ -114,7 +114,9 @@ class ExternalAIOverlayRenderer:
     width = measured.x + padding_x * 2.0
     height = measured.y + padding_y * 2.0
     x = rect.x + (rect.width - width) * 0.5
-    y = rect.y + 18.0
+    # Clear the stock/debug text occupying the top edge of C3/C3X/C4 displays.
+    status_top = max(84.0, min(132.0, rect.height * 0.10))
+    y = rect.y + status_top
     panel = rl.Rectangle(x, y, width, height)
     accent = rl.Color(80, 220, 140, 235) if connected else rl.Color(255, 184, 64, 235)
     rl.draw_rectangle_rounded(panel, 0.45, 10, rl.Color(8, 12, 16, 205))

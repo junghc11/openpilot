@@ -133,6 +133,14 @@ def test_c3x_overlay_status_reports_connection_backend_and_latency() -> None:
   assert connected == "외부 AI · NNAPI · 320 · 총84/AI35ms · 3개"
   assert is_connected
 
+  analyzing, analyzing_connected = phone_ai_status_text(
+    SimpleNamespace(valid=False, connected=True),
+    service_alive=True,
+    service_valid=True,
+  )
+  assert analyzing == "외부 AI · 연결됨 · 분석 대기"
+  assert analyzing_connected
+
 
 @pytest.mark.parametrize("backend", (
   "onnxruntime-qnn",
@@ -206,6 +214,7 @@ def test_traffic_light_state_requires_three_phone_frames_and_holds_short_gaps() 
 
 def test_c3x_overlay_places_compute_badge_bottom_left_and_draws_signal_stack() -> None:
   renderer_source = (OPENPILOT_ROOT / "selfdrive" / "ui" / "onroad" / "external_ai_overlay.py").read_text(encoding="utf-8")
+  assert "status_top = max(84.0, min(132.0, rect.height * 0.10))" in renderer_source
   assert "x = rect.x + 14.0" in renderer_source
   assert "y = rect.y + rect.height - height - 14.0" in renderer_source
   assert "def _draw_signal_indicator" in renderer_source

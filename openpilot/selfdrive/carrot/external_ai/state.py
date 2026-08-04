@@ -7,11 +7,14 @@ from openpilot.selfdrive.carrot.external_ai.receiver import ExternalAIReceiverSt
 def build_phone_ai_payload(
     result: ExternalAIResult | None,
     stats: ExternalAIReceiverStats,
+    *,
+    frame_connected: bool = False,
 ) -> dict[str, object]:
   valid = bool(result is not None and stats.connected)
+  connected = bool(frame_connected or stats.connected)
   return {
     "valid": valid,
-    "connected": stats.connected,
+    "connected": connected,
     "protocolVersion": result.protocol_version if valid else 0,
     "frameId": result.frame_id if valid else 0,
     "sourceTimestampMonotonicNanos": result.source_timestamp_monotonic_ns if valid else 0,

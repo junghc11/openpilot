@@ -85,6 +85,17 @@ def test_disconnected_payload_hides_old_objects_but_keeps_diagnostics() -> None:
   assert payload["lastError"] == "timeout"
 
 
+def test_frame_link_is_connected_while_analysis_result_is_still_pending() -> None:
+  stats = ExternalAIReceiverStats(0, 0, 0, None, None, False)
+
+  payload = build_phone_ai_payload(None, stats, frame_connected=True)
+
+  assert payload["connected"] is True
+  assert payload["valid"] is False
+  assert payload["frameId"] == 0
+  assert payload["objects"] == []
+
+
 def test_phone_ai_cereal_service_uses_reserved_fork_slot() -> None:
   log_schema = (OPENPILOT_ROOT / "cereal" / "log.capnp").read_text(encoding="utf-8")
   custom_schema = (OPENPILOT_ROOT / "cereal" / "custom.capnp").read_text(encoding="utf-8")
@@ -149,6 +160,7 @@ def test_phoneaid_publishes_cereal_payload_with_injected_runtime() -> None:
   assert daemon.receiver.port == 17725
   assert daemon.receiver.allowed_phone_ip == "192.0.2.10"
   assert payload["valid"] is False
+  assert payload["connected"] is False
   assert daemon.pm.sent[0][0] == "phoneAIState"
   assert daemon.pm.sent[0][1].phoneAIState == payload
 
