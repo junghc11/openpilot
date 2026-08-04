@@ -37,35 +37,35 @@ data class VerifiedModelSpec(
 }
 
 object RecommendedModels {
-  const val VERSION = "CarrotPilot raw-head QDQ v2 / Ultralytics assets v8.4.0"
+  const val VERSION = "CarrotPilot HTP mixed-precision raw-head QDQ v3 / Ultralytics assets v8.4.0"
   const val LICENSE_URL = "https://www.ultralytics.com/license"
 
   val YOLO11N_QDQ_320 = VerifiedModelSpec(
     id = "yolo11n_qdq_320",
-    displayName = "YOLO11n NPU W8A16 · 320",
-    profileLabel = "NPU 속도 권장",
+    displayName = "YOLO11n NPU W8A16/A8 · 320",
+    profileLabel = "HTP 호환 속도 권장",
     map5095 = null,
     suggestedSettings = "고정 입력 320 · 목표 10~15 FPS",
-    formatLabel = "Static raw-head QDQ · W8A16 · QNN/HTP 우선",
-    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-320-w8a16-raw-head-qdq.onnx",
-    expectedSize = 3_064_576L,
-    expectedSha256 = "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
-    fileName = "yolo11n-static-320-w8a16-raw-head-qdq.onnx",
+    formatLabel = "Static raw-head QDQ · W8A16 + Attention A8 · QNN/HTP 우선",
+    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-320-w8a16-htp-mixed-raw-head-qdq.onnx",
+    expectedSize = 3_069_679L,
+    expectedSha256 = "331e553a9e73679695ba64793b01331b452a017495885004ec6761d8750e0c94",
+    fileName = "yolo11n-static-320-w8a16-htp-mixed-raw-head-qdq.onnx",
     fixedInputSize = 320,
     qnnOptimized = true,
   )
 
   val YOLO11N_QDQ_640 = VerifiedModelSpec(
     id = "yolo11n_qdq_640",
-    displayName = "YOLO11n NPU W8A16 · 640",
-    profileLabel = "NPU 고화질",
+    displayName = "YOLO11n NPU W8A16/A8 · 640",
+    profileLabel = "HTP 호환 고화질",
     map5095 = null,
     suggestedSettings = "고정 입력 640 · 목표 5~10 FPS",
-    formatLabel = "Static raw-head QDQ · W8A16 · QNN/HTP 우선",
-    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-640-w8a16-raw-head-qdq.onnx",
-    expectedSize = 3_064_734L,
-    expectedSha256 = "156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74",
-    fileName = "yolo11n-static-640-w8a16-raw-head-qdq.onnx",
+    formatLabel = "Static raw-head QDQ · W8A16 + Attention A8 · QNN/HTP 우선",
+    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-640-w8a16-htp-mixed-raw-head-qdq.onnx",
+    expectedSize = 3_069_850L,
+    expectedSha256 = "e31a2f1d9b2bdc3e347dcbc0294cbf033b99fee3f82fef34c3024188442b3fbb",
+    fileName = "yolo11n-static-640-w8a16-htp-mixed-raw-head-qdq.onnx",
     fixedInputSize = 640,
     qnnOptimized = true,
   )
@@ -115,6 +115,8 @@ object RecommendedModels {
   private val LEGACY_QDQ_REPLACEMENTS = mapOf(
     "yolo11n-static-320-w8a16-qdq.onnx" to YOLO11N_QDQ_320,
     "yolo11n-static-640-w8a16-qdq.onnx" to YOLO11N_QDQ_640,
+    "yolo11n-static-320-w8a16-raw-head-qdq.onnx" to YOLO11N_QDQ_320,
+    "yolo11n-static-640-w8a16-raw-head-qdq.onnx" to YOLO11N_QDQ_640,
   )
 
   fun installedFile(context: Context, model: VerifiedModelSpec): File =

@@ -4,12 +4,17 @@ The two ONNX files in this directory are fixed-shape raw-head QDQ derivatives
 of the official Ultralytics `yolo11n.onnx` v8.4.0 asset. They are intended for
 ONNX Runtime QNN with the Qualcomm HTP backend.
 
-- `yolo11n-static-320-w8a16-raw-head-qdq.onnx`: latency-first model, fixed NCHW
-  input `[1, 3, 320, 320]`, float32 graph I/O, QUInt16 activations, QUInt8
-  weights, and raw output `[1, 144, 2100]`.
-- `yolo11n-static-640-w8a16-raw-head-qdq.onnx`: detail-first model, fixed NCHW
-  input `[1, 3, 640, 640]`, float32 graph I/O, QUInt16 activations, QUInt8
-  weights, and raw output `[1, 144, 8400]`.
+- `yolo11n-static-320-w8a16-htp-mixed-raw-head-qdq.onnx`: latency-first
+  model, fixed NCHW input `[1, 3, 320, 320]`, float32 graph I/O, QUInt16
+  activations, QUInt8 weights, and raw output `[1, 144, 2100]`.
+- `yolo11n-static-640-w8a16-htp-mixed-raw-head-qdq.onnx`: detail-first
+  model, fixed NCHW input `[1, 3, 640, 640]`, float32 graph I/O, QUInt16
+  activations, QUInt8 weights, and raw output `[1, 144, 8400]`.
+
+YOLO11n's C2PSA attention contains two activation-to-activation MatMul nodes.
+QNN HTP does not accept UINT16 x UINT16 for these nodes, so one input of each
+MatMul is converted to QUInt8. The resulting UINT8 x UINT8 pair is HTP-compatible
+while the detection head remains QUInt16 for output precision.
 
 The raw output contains 64 DFL box-distribution channels and 80 COCO class
 logits. The 57 extracted nodes cover DFL, anchor generation, sigmoid, and box
@@ -36,10 +41,11 @@ python model_tools/build_qnn_qdq_models.py `
   --calibration-dir coco128 `
   --output-dir models `
   --sizes 320 640 `
-  --samples 128
+  --samples 128 `
+  --activation-bits 16
 ```
 
 The source weights and derived model files remain subject to the Ultralytics
 AGPL-3.0 or Enterprise license. CPU ONNX validation does not prove physical NPU
-placement; the Android client reports `eNPU` only after a full-graph QNN/HTP
-session with CPU fallback disabled completes a warm-up inference.
+placement. The Android client reports `eNPU` only after a strict full-graph QNN
+session succeeds or a QNN session materially outperforms the CPU baseline.

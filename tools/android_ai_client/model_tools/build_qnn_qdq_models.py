@@ -3,7 +3,10 @@
 
 The generated model keeps float32 graph I/O so the Android client can share its
 existing preprocessing and YOLO output parser with CPU compatibility models.
-Weights are QUInt8 and activations are QUInt16 inside the QDQ graph.
+Weights are QUInt8 and activations default to QUInt16. YOLO11's
+activation-to-activation attention MatMul receives a targeted QUInt8 conversion
+on one input so the pair remains supported by the QNN HTP backend without
+reducing the precision of the detection head.
 """
 
 from __future__ import annotations
@@ -191,29 +194,92 @@ def validate_raw_head(decoded_model: Path, raw_model: Path, image_path: Path, si
   return {"max_abs_error": max_abs_error, "rmse": rmse}
 
 
-def build_model(source: Path, calibration_images: list[Path], output_dir: Path, size: int) -> dict[str, object]:
+def attention_matmul_overrides(model_path: Path, activation_type: QuantType) -> tuple[dict, list[str]]:
+  """Use a supported HTP type pair for activation-to-activation MatMul nodes.
+
+  QNN HTP supports UINT8xUINT8, UINT8xUINT16, and UINT16xUINT8 MatMul inputs,
+  but not UINT16xUINT16. YOLO11n's C2PSA attention has two MatMul nodes whose
+  inputs are both activations, so convert the first input of each node to UINT8.
+  """
+  if activation_type != QuantType.QUInt16:
+    return {}, []
+  model = onnx.load(model_path)
+  initializer_names = {initializer.name for initializer in model.graph.initializer}
+  overrides = {}
+  node_names = []
+  for node in model.graph.node:
+    if node.op_type != "MatMul" or len(node.input) != 2:
+      continue
+    if any(name in initializer_names for name in node.input):
+      continue
+    overrides[node.input[0]] = [{"quant_type": QuantType.QUInt8}]
+    node_names.append(node.name)
+  if not node_names:
+    raise ValueError("expected at least one activation-to-activation MatMul for HTP mixed precision")
+  return overrides, node_names
+
+
+def validate_htp_matmul_types(model_path: Path) -> list[dict[str, object]]:
+  model = onnx.load(model_path)
+  producers = {output: node for node in model.graph.node for output in node.output}
+  initializers = {initializer.name: initializer for initializer in model.graph.initializer}
+  allowed_pairs = {("UINT8", "UINT8"), ("UINT8", "UINT16"), ("UINT16", "UINT8")}
+  results = []
+  for node in model.graph.node:
+    if node.op_type != "MatMul":
+      continue
+    input_types = []
+    for input_name in node.input:
+      dq_node = producers.get(input_name)
+      if dq_node is None or dq_node.op_type != "DequantizeLinear" or len(dq_node.input) < 3:
+        input_types.append("FLOAT")
+        continue
+      zero_point = initializers.get(dq_node.input[2])
+      input_types.append(onnx.TensorProto.DataType.Name(zero_point.data_type) if zero_point else "UNKNOWN")
+    pair = tuple(input_types)
+    if pair not in allowed_pairs:
+      raise ValueError(f"HTP-unsupported MatMul input types at {node.name}: {pair}")
+    results.append({"node": node.name, "input_types": input_types})
+  if not results:
+    raise ValueError("expected quantized MatMul nodes in YOLO11n HTP model")
+  return results
+
+
+def build_model(
+    source: Path,
+    calibration_images: list[Path],
+    output_dir: Path,
+    size: int,
+    activation_type: QuantType,
+) -> dict[str, object]:
   output_dir.mkdir(parents=True, exist_ok=True)
+  activation_bits = 8 if activation_type == QuantType.QUInt8 else 16
+  profile_suffix = "htp-mixed" if activation_type == QuantType.QUInt16 else ""
+  quantized_stem = f"yolo11n-static-{size}-w8a{activation_bits}{f'-{profile_suffix}' if profile_suffix else ''}"
   static_model = output_dir / f"yolo11n-static-{size}-fp32.onnx"
   preprocessed_model = output_dir / f"yolo11n-static-{size}-qnn-preprocessed.onnx"
-  decoded_quantized_model = output_dir / f"yolo11n-static-{size}-w8a16-decoded-qdq.onnx"
-  quantized_model = output_dir / f"yolo11n-static-{size}-w8a16-raw-head-qdq.onnx"
+  decoded_quantized_model = output_dir / f"{quantized_stem}-decoded-qdq.onnx"
+  quantized_model = output_dir / f"{quantized_stem}-raw-head-qdq.onnx"
 
   input_name = make_static_model(source, static_model, size)
   changed = qnn_preprocess_model(static_model, preprocessed_model)
   model_to_quantize = preprocessed_model if changed else static_model
   reader = ImageCalibrationReader(input_name, calibration_images, size)
+  init_overrides, mixed_precision_nodes = attention_matmul_overrides(model_to_quantize, activation_type)
   config = get_qnn_qdq_config(
     model_to_quantize,
     reader,
-    activation_type=QuantType.QUInt16,
+    activation_type=activation_type,
     weight_type=QuantType.QUInt8,
     per_channel=False,
+    init_overrides=init_overrides,
     calibration_providers=["CPUExecutionProvider"],
   )
   quantize(model_to_quantize, decoded_quantized_model, config)
   validation = validate_model(model_to_quantize, decoded_quantized_model, calibration_images[0], size)
   raw_head = extract_raw_head_model(decoded_quantized_model, quantized_model)
   raw_head_validation = validate_raw_head(decoded_quantized_model, quantized_model, calibration_images[0], size)
+  htp_matmul_validation = validate_htp_matmul_types(quantized_model)
 
   static_model.unlink(missing_ok=True)
   preprocessed_model.unlink(missing_ok=True)
@@ -223,8 +289,10 @@ def build_model(source: Path, calibration_images: list[Path], output_dir: Path, 
     "size": quantized_model.stat().st_size,
     "sha256": sha256(quantized_model),
     "input_size": size,
-    "activation_type": "QUInt16",
+    "activation_type": activation_type.name,
     "weight_type": "QUInt8",
+    "mixed_precision_matmul_nodes": mixed_precision_nodes,
+    "htp_matmul_validation": htp_matmul_validation,
     "calibration_images": len(calibration_images),
     "validation": validation,
     "raw_head": {
@@ -243,6 +311,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--output-dir", type=Path, required=True)
   parser.add_argument("--sizes", type=int, nargs="+", default=[320])
   parser.add_argument("--samples", type=int, default=64)
+  parser.add_argument("--activation-bits", type=int, choices=(8, 16), default=16)
   return parser.parse_args()
 
 
@@ -258,11 +327,15 @@ def main() -> None:
     raise ValueError("at least 8 calibration images are required")
 
   calibration_images = collect_calibration_images(args.calibration_dir, args.samples)
+  activation_type = QuantType.QUInt8 if args.activation_bits == 8 else QuantType.QUInt16
   manifest = {
     "format": 1,
     "source": args.source.name,
     "source_sha256": sha256(args.source),
-    "models": [build_model(args.source, calibration_images, args.output_dir, size) for size in args.sizes],
+    "models": [
+      build_model(args.source, calibration_images, args.output_dir, size, activation_type)
+      for size in args.sizes
+    ],
   }
   manifest_path = args.output_dir / "manifest.json"
   manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

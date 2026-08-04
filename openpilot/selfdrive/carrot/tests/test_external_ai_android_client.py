@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.15.2"' in gradle
+  assert 'versionName = "0.15.3"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -134,11 +134,19 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
   for model in manifest["models"]:
     path = MODELS_ROOT / model["file"]
     expected_anchors = sum((model["input_size"] // stride) ** 2 for stride in (8, 16, 32))
-    assert model["file"].endswith("-raw-head-qdq.onnx")
+    assert model["file"].endswith("-htp-mixed-raw-head-qdq.onnx")
     assert path.stat().st_size == model["size"]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == model["sha256"]
     assert model["activation_type"] == "QUInt16"
     assert model["weight_type"] == "QUInt8"
+    assert model["mixed_precision_matmul_nodes"] == [
+      "/model.10/m/m.0/attn/MatMul",
+      "/model.10/m/m.0/attn/MatMul_1",
+    ]
+    assert model["htp_matmul_validation"] == [
+      {"node": "/model.10/m/m.0/attn/MatMul", "input_types": ["UINT8", "UINT8"]},
+      {"node": "/model.10/m/m.0/attn/MatMul_1", "input_types": ["UINT8", "UINT8"]},
+    ]
     assert model["calibration_images"] == 128
     assert model["validation"]["input_shape"] == [1, 3, model["input_size"], model["input_size"]]
     assert not {"ConstantOfShape", "Range", "Shape"}.intersection(model["validation"]["operator_types"])
@@ -159,8 +167,8 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
   assert "applyModelInputPolicy" in activity
   assert "activeModel?.fixedInputSize" in activity
   assert "replacementForLegacyUri" in activity
-  assert '"yolo11n-static-320-w8a16-qdq.onnx" to YOLO11N_QDQ_320' in downloader
-  assert '"yolo11n-static-640-w8a16-qdq.onnx" to YOLO11N_QDQ_640' in downloader
+  assert '"yolo11n-static-320-w8a16-raw-head-qdq.onnx" to YOLO11N_QDQ_320' in downloader
+  assert '"yolo11n-static-640-w8a16-raw-head-qdq.onnx" to YOLO11N_QDQ_640' in downloader
   assert "tryQnn = modelSpec?.qnnOptimized != false" in service
   assert "Dynamic FP32 CPU 호환 모델" in service
 

@@ -4,12 +4,32 @@
   "source_sha256": "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
   "models": [
     {
-      "file": "yolo11n-static-320-w8a16-raw-head-qdq.onnx",
-      "size": 3064576,
-      "sha256": "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
+      "file": "yolo11n-static-320-w8a16-htp-mixed-raw-head-qdq.onnx",
+      "size": 3069679,
+      "sha256": "331e553a9e73679695ba64793b01331b452a017495885004ec6761d8750e0c94",
       "input_size": 320,
       "activation_type": "QUInt16",
       "weight_type": "QUInt8",
+      "mixed_precision_matmul_nodes": [
+        "/model.10/m/m.0/attn/MatMul",
+        "/model.10/m/m.0/attn/MatMul_1"
+      ],
+      "htp_matmul_validation": [
+        {
+          "node": "/model.10/m/m.0/attn/MatMul",
+          "input_types": [
+            "UINT8",
+            "UINT8"
+          ]
+        },
+        {
+          "node": "/model.10/m/m.0/attn/MatMul_1",
+          "input_types": [
+            "UINT8",
+            "UINT8"
+          ]
+        }
+      ],
       "calibration_images": 128,
       "validation": {
         "input_shape": [
@@ -44,7 +64,7 @@
               84,
               2100
             ],
-            "normalized_rmse": 0.05106204375624657
+            "normalized_rmse": 0.05004628002643585
           }
         ]
       },
@@ -56,17 +76,37 @@
           2100
         ],
         "removed_nodes": 57,
-        "max_abs_error": 0.03704833984375,
-        "rmse": 0.0011474475031718612
+        "max_abs_error": 0.0432891845703125,
+        "rmse": 0.001170649193227291
       }
     },
     {
-      "file": "yolo11n-static-640-w8a16-raw-head-qdq.onnx",
-      "size": 3064734,
-      "sha256": "156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74",
+      "file": "yolo11n-static-640-w8a16-htp-mixed-raw-head-qdq.onnx",
+      "size": 3069850,
+      "sha256": "e31a2f1d9b2bdc3e347dcbc0294cbf033b99fee3f82fef34c3024188442b3fbb",
       "input_size": 640,
       "activation_type": "QUInt16",
       "weight_type": "QUInt8",
+      "mixed_precision_matmul_nodes": [
+        "/model.10/m/m.0/attn/MatMul",
+        "/model.10/m/m.0/attn/MatMul_1"
+      ],
+      "htp_matmul_validation": [
+        {
+          "node": "/model.10/m/m.0/attn/MatMul",
+          "input_types": [
+            "UINT8",
+            "UINT8"
+          ]
+        },
+        {
+          "node": "/model.10/m/m.0/attn/MatMul_1",
+          "input_types": [
+            "UINT8",
+            "UINT8"
+          ]
+        }
+      ],
       "calibration_images": 128,
       "validation": {
         "input_shape": [
@@ -101,7 +141,7 @@
               84,
               8400
             ],
-            "normalized_rmse": 0.04596736282110214
+            "normalized_rmse": 0.044731419533491135
           }
         ]
       },
@@ -113,8 +153,8 @@
           8400
         ],
         "removed_nodes": 57,
-        "max_abs_error": 0.06732177734375,
-        "rmse": 0.0019880158361047506
+        "max_abs_error": 0.068389892578125,
+        "rmse": 0.002001745393499732
       }
     }
   ]
