@@ -54,6 +54,10 @@ class MainActivity : Activity() {
   private lateinit var acceleratorDetail: TextView
   private lateinit var analysisConsole: TextView
   private lateinit var analysisConsoleScroll: ScrollView
+  private lateinit var logUploadUrl: EditText
+  private lateinit var logUploadKey: EditText
+  private lateinit var logUploadStatus: TextView
+  private lateinit var uploadLogButton: Button
   private lateinit var status: TextView
   private lateinit var connectionChip: TextView
   private lateinit var deviceHeadline: TextView
@@ -73,6 +77,7 @@ class MainActivity : Activity() {
   private var selectedCatalogModel = RecommendedModels.DEFAULT
   private var suppressModelSelection = false
   private val analysisEntries = ArrayDeque<String>()
+  private val logScaleButtons = linkedMapOf<Int, Button>()
   private var activityStarted = false
   @Volatile private var downloadingModel = false
   private var downloadThread: Thread? = null
@@ -479,6 +484,22 @@ class MainActivity : Activity() {
       })
     }
     addView(header, matchWidth())
+    addView(LinearLayout(this@MainActivity).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      addView(label("로그창 높이", 12f, COLOR_MUTED, Typeface.BOLD), weighted())
+      (1..3).forEach { scale ->
+        val button = styledButton("X$scale", primary = false, compact = true).apply {
+          setOnClickListener { applyLogWindowScale(scale, persist = true) }
+        }
+        logScaleButtons[scale] = button
+        addView(button, LinearLayout.LayoutParams(dp(58), dp(40)).apply {
+          if (scale > 1) leftMargin = dp(6)
+        })
+      }
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = dp(12)
+    })
     analysisConsole = label(CONSOLE_PLACEHOLDER, 12f, COLOR_TEXT).apply {
       typeface = Typeface.MONOSPACE
       setTextIsSelectable(true)
@@ -487,14 +508,58 @@ class MainActivity : Activity() {
       background = roundedBackground(Color.WHITE, 16f, COLOR_BORDER)
     }
     analysisConsoleScroll = ScrollView(this@MainActivity).apply {
-      isFillViewport = true
+      isFillViewport = false
+      isVerticalScrollBarEnabled = true
+      overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
       addView(analysisConsole, matchWidth())
     }
-    addView(analysisConsoleScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(520)).apply { topMargin = dp(14) })
+    addView(analysisConsoleScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(LOG_WINDOW_HEIGHT_X1_DP)).apply { topMargin = dp(10) })
     addView(label("탐지 결과는 화면 표시와 진단 전용이며 차량 제어에는 사용되지 않습니다.", 12f, COLOR_ORANGE_DARK).apply {
       setPadding(dp(14), dp(12), dp(14), dp(12))
       background = roundedBackground(COLOR_ORANGE_TINT, 12f, COLOR_ORANGE_BORDER)
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+
+    addView(card().apply {
+      addView(sectionTitle("진단 로그 묶음 전송"))
+      addView(label("Android 객체 로그와 성능 상태를 묶어 서버로 전송합니다. 영상과 비밀번호는 포함하지 않습니다.", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(5), 0, dp(8))
+      })
+      logUploadUrl = addField(this, "업로드 서버 URL", DEFAULT_LOG_UPLOAD_URL).apply {
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+      }
+      logUploadKey = addField(this, "일회용 공유 키 (선택)", "").apply {
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+      }
+      uploadLogButton = styledButton("로그 묶음 전송", primary = true).apply {
+        setOnClickListener { uploadDiagnosticBundle() }
+      }
+      addView(uploadLogButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(10) })
+      logUploadStatus = label("대기 중 · LAN HTTP는 192.168.1.35만 허용 · 외부 접속은 HTTPS 권장", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(9), 0, 0)
+      }
+      addView(logUploadStatus, matchWidth())
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = dp(12)
+      bottomMargin = dp(12)
+    })
+  }
+
+  private fun applyLogWindowScale(scale: Int, persist: Boolean) {
+    val safeScale = scale.coerceIn(1, 3)
+    if (::analysisConsoleScroll.isInitialized) {
+      val heightDp = when (safeScale) {
+        2 -> LOG_WINDOW_HEIGHT_X2_DP
+        3 -> LOG_WINDOW_HEIGHT_X3_DP
+        else -> LOG_WINDOW_HEIGHT_X1_DP
+      }
+      analysisConsoleScroll.layoutParams = analysisConsoleScroll.layoutParams.apply { height = dp(heightDp) }
+    }
+    logScaleButtons.forEach { (buttonScale, button) ->
+      val selected = buttonScale == safeScale
+      button.setTextColor(if (selected) Color.WHITE else COLOR_TEXT)
+      button.background = roundedBackground(if (selected) COLOR_ORANGE else Color.WHITE, 12f, if (selected) COLOR_ORANGE else COLOR_BORDER_STRONG)
+    }
+    if (persist) preferences.edit().putInt(KEY_LOG_WINDOW_SCALE, safeScale).apply()
   }
 
   private fun selectTab(index: Int) {
@@ -761,6 +826,8 @@ class MainActivity : Activity() {
     inferenceFps.setText(preferences.getInt(KEY_TARGET_FPS, 5).toString())
     inputSize.setText(preferences.getInt(KEY_INPUT_SIZE, 320).toString())
     autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
+    logUploadUrl.setText(preferences.getString(KEY_LOG_UPLOAD_URL, DEFAULT_LOG_UPLOAD_URL))
+    applyLogWindowScale(preferences.getInt(KEY_LOG_WINDOW_SCALE, 1), persist = false)
     val storedUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
     val legacyReplacement = RecommendedModels.replacementForLegacyUri(storedUri)
     if (legacyReplacement != null) selectedCatalogModel = legacyReplacement
@@ -851,6 +918,58 @@ class MainActivity : Activity() {
     analysisConsole.text = CONSOLE_PLACEHOLDER
     recentDetectionPreview.text = RECENT_PLACEHOLDER
     recentDetectionPreview.setTextColor(COLOR_MUTED)
+  }
+
+  private fun uploadDiagnosticBundle() {
+    val baseUrl = logUploadUrl.text.toString().trim()
+    val sharedKey = logUploadKey.text.toString()
+    preferences.edit().putString(KEY_LOG_UPLOAD_URL, baseUrl).apply()
+    uploadLogButton.isEnabled = false
+    uploadLogButton.alpha = 0.55f
+    logUploadStatus.text = "로그 묶음 생성 중…"
+
+    val snapshot = DiagnosticBundleSnapshot(
+      createdAtMillis = System.currentTimeMillis(),
+      device = deviceSummaryForBundle(),
+      appVersion = BuildConfig.VERSION_NAME,
+      c3xHost = host.text.toString().trim(),
+      connectionStatus = status.text.toString(),
+      model = currentModelValue.text.toString(),
+      accelerator = backendBadge.text.toString(),
+      acceleratorDetail = acceleratorDetail.text.toString(),
+      videoFps = videoFpsValue.text.toString(),
+      aiFps = aiFpsValue.text.toString(),
+      frameFollowPercent = followRateValue.text.toString(),
+      skippedFps = skippedFpsValue.text.toString(),
+      analysisLogs = analysisEntries.toList(),
+    )
+
+    Thread {
+      val result = runCatching {
+        val bundle = DiagnosticBundleUploader.createBundle(this, snapshot)
+        try {
+          DiagnosticBundleUploader.upload(baseUrl, sharedKey, bundle, snapshot)
+        } finally {
+          bundle.delete()
+        }
+      }
+      runOnUiThread {
+        uploadLogButton.isEnabled = true
+        uploadLogButton.alpha = 1f
+        result.onSuccess { upload ->
+          logUploadStatus.setTextColor(COLOR_GREEN)
+          logUploadStatus.text = "전송 완료 · ${upload.fileName} · ${upload.bytesSent} bytes"
+        }.onFailure { error ->
+          logUploadStatus.setTextColor(COLOR_RED)
+          logUploadStatus.text = "전송 실패 · ${error.message ?: error.javaClass.simpleName}"
+        }
+      }
+    }.start()
+  }
+
+  private fun deviceSummaryForBundle(): String {
+    val soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else Build.HARDWARE
+    return "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · SoC ${soc.ifBlank { "unknown" }}"
   }
 
   private fun updatePerformanceHud(intent: Intent) {
@@ -944,9 +1063,15 @@ class MainActivity : Activity() {
     private const val KEY_INPUT_SIZE = "input_size"
     private const val KEY_MODEL_URI = "model_uri"
     private const val KEY_AUTO_CONNECT = "auto_connect"
+    private const val KEY_LOG_WINDOW_SCALE = "log_window_scale"
+    private const val KEY_LOG_UPLOAD_URL = "log_upload_url"
     private const val REQUEST_MODEL = 10
     private const val REQUEST_NOTIFICATIONS = 11
     private const val MAX_CONSOLE_ENTRIES = 40
+    private const val LOG_WINDOW_HEIGHT_X1_DP = 220
+    private const val LOG_WINDOW_HEIGHT_X2_DP = 360
+    private const val LOG_WINDOW_HEIGHT_X3_DP = 520
+    private const val DEFAULT_LOG_UPLOAD_URL = "http://192.168.1.35:8088"
     private const val CONSOLE_PLACEHOLDER = "[대기] 연결 후 객체 분석 로그가 표시됩니다.\n시간 · 프레임 · 객체 · 신뢰도 · 픽셀 좌표"
     private const val RECENT_PLACEHOLDER = "아직 감지 결과가 없습니다.\n연결 후 최근 분석 5개가 이곳에 표시됩니다."
     private const val SSH_USER = "comma"

@@ -4,7 +4,7 @@ This experimental app receives the default 854×480 hardware H.264 stream or com
 
 ## App screen
 
-Starting with v0.10.0, the app uses a bright card-based layout with **Status, Model, and Log** tabs. **Status** shows the connection address, active YOLO model, `eNPU`/`eCPU`, VIDEO FPS, AI FPS, frame-follow rate, SKIP, and the five most recent detections. **Model** contains verified-model downloads plus input-size, target-FPS, and confidence settings. Selecting an NPU model automatically locks the input to its static shape. **Log** shows and clears the complete live detection console. Manual IP, ports, and the SSH deployment-command copy action are under **Connection management** on the Status tab.
+Starting with v0.14.0, the app uses a bright card-based layout with **Status, Model, and Log** tabs. **Status** shows the connection address, active YOLO model, `eNPU`/`eCPU`, VIDEO FPS, AI FPS, frame-follow rate, SKIP, and the five most recent detections. **Model** contains verified-model downloads plus input-size, target-FPS, and confidence settings. Selecting an NPU model automatically locks the input to its static shape. **Log** uses an internally scrolling X1/X2/X3-height console, reports a detected traffic-light color on a separate line, and can upload a diagnostic bundle. Manual IP, ports, and the SSH deployment-command copy action are under **Connection management** on the Status tab.
 
 ## Supported environment and model
 
@@ -14,7 +14,7 @@ Starting with v0.10.0, the app uses a bright card-based layout with **Status, Mo
 - Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`, plus the bundled-catalog QDQ raw head `[1, 144, N]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.13.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It verifies a full HTP graph with `session.disable_cpu_ep_fallback=1` and retains a mixed QNN+CPU candidate only when profiling observes actual HTP execution. NNAPI allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. Every usable candidate and ORT CPU run two warmups plus seven identical-input measurements. An accelerator is selected only when its p95 is at least 10% faster than CPU and its p50 is no slower.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.14.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It verifies a full HTP graph with `session.disable_cpu_ep_fallback=1` and retains a mixed QNN+CPU candidate only when profiling observes actual HTP execution. NNAPI allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. Every usable candidate and ORT CPU run two warmups plus seven identical-input measurements. An accelerator is selected only when its p95 is at least 10% faster than CPU and its p50 is no slower.
 
 No YOLO model is bundled in the APK. **The recommended first-test model is `YOLO11n NPU W8A16 · 320`.** It fixes and simplifies the official YOLO11n graph, uses QDQ calibration from all 128 COCO128 images, and moves 57 DFL, anchor, sigmoid, and decode nodes into Kotlin. The NPU graph returns a `[1,144,N]` raw head which the app reconstructs into the conventional `[1,84,N]` result before NMS. CPU output comparison passed; physical full-graph HTP placement and quantized accuracy still require device testing.
 
@@ -96,6 +96,18 @@ The status view separates the rolling 120-sample average and p95 phone time, cur
 - A large `total latency - phone time` indicates C3X encoding, Wi-Fi, or return-path delay.
 - p95 rising far above the average, or a `performance limited` thermal state, indicates likely thermal throttling.
 - If sustained performance is insufficient at 320, do not raise the input or select a larger model.
+
+## Receiving diagnostics at 192.168.1.35
+
+**Upload diagnostic bundle** sends a ZIP containing recent object logs and model, accelerator, FPS, and connection state. It never includes camera frames or the shared key. The default LAN endpoint is `http://192.168.1.35:8088`. Run the included receiver on the storage server:
+
+```bash
+python log_bundle_receiver.py --bind 0.0.0.0 --port 8088 --output-dir /mnt/carrot-ai-logs --shared-key "a-long-random-key"
+```
+
+`/mnt/carrot-ai-logs` may be a CIFS share mounted by the server. Enter the same key in the app; it is neither persisted nor included in the bundle. For access beyond the LAN, do not forward SMB/CIFS port 445. Bind the receiver to `127.0.0.1` and expose only a valid-certificate HTTPS reverse proxy, then change the app URL to that `https://` hostname.
+
+Carrot Web draws a YOLO box, localized object type, and confidence over its live road video only while the latest `phoneAIState` is under 750ms old. A classified red, yellow, or green traffic-light state is included. This remains visualization-only.
 
 ## Screen-off and power behavior
 

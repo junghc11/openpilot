@@ -11,6 +11,7 @@ window.CarrotVisionCompact = (() => {
   const OVERLAY_SERVICES = [
     "modelV2", "liveCalibration", "roadCameraState", "lateralPlan",
     "radarState", "carControl", "liveDelay", "liveTorqueParameters", "liveParameters",
+    "phoneAIState",
   ];
   // Kept out of OVERLAY_SERVICES so the always-on overlay group does not pay
   // for a full radar track list. Decoded frames still land in the overlay
@@ -91,6 +92,10 @@ window.CarrotVisionCompact = (() => {
   ];
   const tpms = [
     ["fl", "f32"], ["fr", "f32"], ["rl", "f32"], ["rr", "f32"],
+  ];
+  const phoneAiObject = [
+    ["classId", "u16"], ["className", "text"], ["confidence", "f32"],
+    ["x1", "f32"], ["y1", "f32"], ["x2", "f32"], ["y2", "f32"],
   ];
 
   const schemas = new Map([
@@ -214,6 +219,12 @@ window.CarrotVisionCompact = (() => {
       ["angularVelocityDevice", "struct", xyzMeasurement],
       ["inputsOK", "bool"], ["posenetOK", "bool"], ["sensorsOK", "bool"],
       ["timestamp", "u64"],
+    ]]],
+    [22, ["phoneAIState", [
+      ["valid", "bool"], ["connected", "bool"], ["frameId", "u64"],
+      ["latencyMs", "f32"], ["modelName", "text"], ["backend", "text"],
+      ["trafficLightState", "text"], ["trafficLightConfidence", "f32"],
+      ["objects", "structlist", phoneAiObject],
     ]]],
   ]);
 

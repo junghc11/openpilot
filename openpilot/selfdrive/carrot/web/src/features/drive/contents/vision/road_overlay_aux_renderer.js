@@ -12,6 +12,37 @@ function hasNearbyAssistLead(lead, speedMps) {
     && finiteNumber(lead?.dRel, Infinity) < threshold;
 }
 
+const EXTERNAL_AI_MAX_AGE_MS = 750;
+const EXTERNAL_AI_MAX_OBJECTS = 64;
+
+const EXTERNAL_AI_LABELS_KO = Object.freeze({
+  person: "사람",
+  bicycle: "자전거",
+  car: "차량",
+  motorcycle: "오토바이",
+  bus: "버스",
+  truck: "트럭",
+  "traffic light": "신호등",
+  "stop sign": "정지표지판",
+});
+
+function clampUnit(value) {
+  return Math.min(1, Math.max(0, finiteNumber(value, 0)));
+}
+
+function externalAIColor(className, trafficLightState) {
+  if (className === "traffic light") {
+    if (trafficLightState === "red") return ["rgba(255,72,72,0.12)", "rgba(255,72,72,0.96)"];
+    if (trafficLightState === "yellow") return ["rgba(255,205,48,0.13)", "rgba(255,205,48,0.96)"];
+    if (trafficLightState === "green") return ["rgba(44,210,105,0.12)", "rgba(44,210,105,0.96)"];
+  }
+  if (className === "person") return ["rgba(255,138,47,0.11)", "rgba(255,138,47,0.94)"];
+  if (["car", "bus", "truck", "motorcycle", "bicycle"].includes(className)) {
+    return ["rgba(54,205,255,0.10)", "rgba(54,205,255,0.94)"];
+  }
+  return ["rgba(255,255,255,0.08)", "rgba(255,255,255,0.90)"];
+}
+
 export function createRoadOverlayAuxRenderer(options = {}) {
   const getParams = typeof options.getParams === "function" ? options.getParams : () => ({});
   const pathZOffset = finiteNumber(options.pathZOffset, 1.22);
@@ -109,7 +140,58 @@ export function createRoadOverlayAuxRenderer(options = {}) {
     });
   }
 
-  return Object.freeze({ drawBlindspotBarriers, drawProjectedTfMarker });
+  function drawExternalAI(phoneAIState, videoWidth, videoHeight, updatedAtMs, nowMs = Date.now()) {
+    if (
+      !phoneAIState?.valid
+      || !phoneAIState?.connected
+      || !Array.isArray(phoneAIState?.objects)
+      || !Number.isFinite(Number(updatedAtMs))
+      || nowMs - Number(updatedAtMs) > EXTERNAL_AI_MAX_AGE_MS
+      || typeof ui.drawRoundedBox !== "function"
+    ) return 0;
+
+    const language = String(typeof ui.language === "function" ? ui.language() : "").toLowerCase();
+    const isKorean = language.startsWith("ko");
+    const uiScale = ui.getScale(videoWidth, videoHeight);
+    const fontSize = Math.max(16 * uiScale, 11);
+    const lineWidth = Math.max(2.4 * uiScale, 1.5);
+    let drawn = 0;
+    for (const object of phoneAIState.objects.slice(0, EXTERNAL_AI_MAX_OBJECTS)) {
+      const className = String(object?.className || "").trim().toLowerCase();
+      const confidence = Math.min(1, Math.max(0, finiteNumber(object?.confidence, 0)));
+      const x1 = clampUnit(object?.x1) * videoWidth;
+      const y1 = clampUnit(object?.y1) * videoHeight;
+      const x2 = clampUnit(object?.x2) * videoWidth;
+      const y2 = clampUnit(object?.y2) * videoHeight;
+      if (!className || confidence <= 0 || x2 - x1 < 4 || y2 - y1 < 4) continue;
+
+      const [fill, stroke] = externalAIColor(className, phoneAIState.trafficLightState);
+      ui.drawRoundedBox(x1, y1, x2 - x1, y2 - y1, Math.max(5 * uiScale, 3), fill, stroke, lineWidth);
+      const localizedName = isKorean ? (EXTERNAL_AI_LABELS_KO[className] || className) : className;
+      const signal = className === "traffic light" && phoneAIState.trafficLightState && phoneAIState.trafficLightState !== "unknown"
+        ? ` · ${isKorean ? ({ red: "빨강", yellow: "노랑", green: "초록" }[phoneAIState.trafficLightState] || phoneAIState.trafficLightState) : phoneAIState.trafficLightState}`
+        : "";
+      const label = `${localizedName}${signal} ${Math.round(confidence * 100)}%`;
+      const measuredWidth = typeof ui.measureText === "function"
+        ? ui.measureText(label, fontSize)
+        : label.length * fontSize * 0.62;
+      const labelWidth = Math.min(videoWidth - 8, Math.max(fontSize * 3.2, measuredWidth + 12 * uiScale));
+      const labelHeight = Math.max(fontSize * 1.55, 20 * uiScale);
+      const labelX = Math.min(Math.max(4, x1), Math.max(4, videoWidth - labelWidth - 4));
+      const labelY = Math.max(4, y1 - labelHeight - 2);
+      ui.drawRoundedBox(labelX, labelY, labelWidth, labelHeight, Math.max(4 * uiScale, 2), "rgba(14,18,24,0.86)", stroke, Math.max(lineWidth * 0.65, 1));
+      ui.drawText(label, labelX + 6 * uiScale, labelY + labelHeight * 0.74, {
+        fontSize,
+        fontWeight: 800,
+        align: "left",
+        strokeWidth: Math.max(2.2 * uiScale, 1.2),
+      });
+      drawn += 1;
+    }
+    return drawn;
+  }
+
+  return Object.freeze({ drawBlindspotBarriers, drawProjectedTfMarker, drawExternalAI });
 }
 
 export const DriveVisionRoadOverlayAuxRenderer = Object.freeze({

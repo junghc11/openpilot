@@ -47,6 +47,10 @@ const arContract = {
     "guidanceCurrent", "guidanceNext", "laneCurrent", "laneAhead", "speed", "trafficSignal", "crossroad",
     "route", "navigationStatus",
   ]],
+  phoneAIState: [22, [
+    "valid", "connected", "frameId", "latencyMs", "modelName", "backend",
+    "trafficLightState", "trafficLightConfidence", "objects",
+  ]],
 };
 
 const nestedContract = {
@@ -216,6 +220,7 @@ test("native AR encoders retain the shared field sequence and route limit", () =
     encode_radar_state: arContract.radarState[1],
     encode_camera_odometry: arContract.cameraOdometry[1],
     encode_live_pose: arContract.livePose[1],
+    encode_phone_ai_state: arContract.phoneAIState[1].filter((field) => field !== "objects"),
   };
   for (const [encoder, fields] of Object.entries(directEncoders)) {
     assertTokensInOrder(functionBody(nativeSource, encoder), fields, encoder);
@@ -228,6 +233,10 @@ test("native AR encoders retain the shared field sequence and route limit", () =
     "encode_model_v2: leadsV3 helper moved out of wire order",
   );
   assert.match(functionBody(nativeSource, "append_model_leads"), /find_value\(reader, "leadsV3"\)/);
+  assertTokensInOrder(functionBody(nativeSource, "append_phone_ai_objects"), [
+    "objects", "classId", "className", "confidence", "x1", "y1", "x2", "y2",
+  ], "native phone AI objects");
+  assert.match(functionBody(nativeSource, "encode_phone_ai_state"), /append_phone_ai_objects/);
 
   assertTokensInOrder(functionBody(nativeSource, "encode_service"), arContract.roadCameraState[1], "roadCameraState");
   const navi = functionBody(nativeSource, "encode_carrot_navi");
@@ -246,4 +255,5 @@ test("native AR encoders retain the shared field sequence and route limit", () =
   assert.match(pythonSource, /^ROUTE_POLYLINE_LIMIT = 64$/m);
   assert.match(nativeSource, /^constexpr size_t kRoutePolylineLimit = 64;$/m);
   assert.match(browserSource, /const AR_SERVICES = \["cameraOdometry", "livePose", "carrotNavi"\];/);
+  assert.match(browserSource, /const OVERLAY_SERVICES = \[[\s\S]*"phoneAIState"/);
 });

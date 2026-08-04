@@ -752,6 +752,41 @@ void encode_car_control(std::string &out, const DynamicReader &value) {
   append_f32(out, value, "actuators", "curvature");
 }
 
+constexpr size_t kPhoneAIObjectLimit = 64;
+
+void append_phone_ai_objects(std::string &out, const DynamicReader &value) {
+  const auto objects = find_value(value, "objects");
+  if (!objects.has_value()) {
+    append_scalar(out, static_cast<uint8_t>(0));
+    return;
+  }
+  const auto list = objects->as<capnp::DynamicList>();
+  const uint8_t size = static_cast<uint8_t>(std::min<size_t>(list.size(), kPhoneAIObjectLimit));
+  append_scalar(out, size);
+  for (uint8_t i = 0; i < size; ++i) {
+    const auto object = list[i].as<capnp::DynamicStruct>();
+    append_u16(out, object, "classId");
+    append_text(out, object, "className");
+    append_f32(out, object, "confidence");
+    append_f32(out, object, "x1");
+    append_f32(out, object, "y1");
+    append_f32(out, object, "x2");
+    append_f32(out, object, "y2");
+  }
+}
+
+void encode_phone_ai_state(std::string &out, const DynamicReader &value) {
+  append_bool(out, value, "valid");
+  append_bool(out, value, "connected");
+  append_u64(out, value, "frameId");
+  append_f32(out, value, "latencyMs");
+  append_text(out, value, "modelName");
+  append_text(out, value, "backend");
+  append_text(out, value, "trafficLightState");
+  append_f32(out, value, "trafficLightConfidence");
+  append_phone_ai_objects(out, value);
+}
+
 uint8_t service_id(const std::string &service) {
   if (service == "carState") return 1;
   if (service == "controlsState") return 2;
@@ -774,6 +809,7 @@ uint8_t service_id(const std::string &service) {
   if (service == "cameraOdometry") return 19;
   if (service == "livePose") return 20;
   if (service == "carrotNavi") return 21;
+  if (service == "phoneAIState") return 22;
   throw std::invalid_argument("unsupported compact state service");
 }
 
@@ -810,6 +846,7 @@ void encode_service(std::string &out, const std::string &service, const DynamicR
   else if (service == "cameraOdometry") encode_camera_odometry(out, value);
   else if (service == "livePose") encode_live_pose(out, value);
   else if (service == "carrotNavi") encode_carrot_navi(out, value);
+  else if (service == "phoneAIState") encode_phone_ai_state(out, value);
 }
 
 }  // namespace

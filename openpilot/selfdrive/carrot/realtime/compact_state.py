@@ -183,6 +183,16 @@ TPMS_SCHEMA = (
   ("rr", "f32"),
 )
 
+PHONE_AI_OBJECT_SCHEMA = (
+  ("classId", "u16"),
+  ("className", "text"),
+  ("confidence", "f32"),
+  ("x1", "f32"),
+  ("y1", "f32"),
+  ("x2", "f32"),
+  ("y2", "f32"),
+)
+
 
 # This is deliberately a display schema, not a second cereal transport. Every
 # field consumed by Carrot Vision is retained, while unused model tensors and
@@ -420,6 +430,20 @@ SERVICE_SCHEMAS: dict[str, tuple[int, tuple[tuple[Any, ...], ...]]] = {
     ("sensorsOK", "bool"),
     ("timestamp", "u64"),
   )),
+  # External Android AI is visualization/diagnostics-only. The compact web
+  # channel carries only the latest accepted boxes and display metadata; it is
+  # never an input to vehicle control.
+  "phoneAIState": (22, (
+    ("valid", "bool"),
+    ("connected", "bool"),
+    ("frameId", "u64"),
+    ("latencyMs", "f32"),
+    ("modelName", "text"),
+    ("backend", "text"),
+    ("trafficLightState", "text"),
+    ("trafficLightConfidence", "f32"),
+    ("objects", ("struct_list", PHONE_AI_OBJECT_SCHEMA)),
+  )),
 }
 
 CARROT_STATE_SERVICES = tuple(SERVICE_SCHEMAS.keys())
@@ -443,6 +467,7 @@ COMPACT_SERVICE_INTERVALS = {
   "livePose": 0.05,
   # Navi 는 원래 2Hz 발행이라 그대로 따른다.
   "carrotNavi": 0.5,
+  "phoneAIState": 0.1,
   "lateralPlan": 0.05,
   "carrotMan": 0.1,
   "roadCameraState": 0.25,

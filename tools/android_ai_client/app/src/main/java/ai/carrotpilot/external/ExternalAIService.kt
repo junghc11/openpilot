@@ -350,13 +350,21 @@ class ExternalAIService : Service() {
     transportLabel: String,
   ): String {
     val detections = detectionResult.detections.sortedByDescending(Detection::confidence)
+    val trafficLightDetected = detections.any { it.className == "traffic light" }
+    val trafficLightLine = if (trafficLightDetected) {
+      val localizedState = localizedTrafficLightState(detectionResult.trafficLightState)
+      val confidence = if (detectionResult.trafficLightState == TrafficLightColorResult.UNKNOWN) {
+        ""
+      } else {
+        " (${"%.0f".format(detectionResult.trafficLightConfidence * 100f)}%)"
+      }
+      "\n  신호등 색상: $localizedState$confidence [${detectionResult.trafficLightState}]"
+    } else {
+      ""
+    }
     val header = "${analysisTimeFormat.format(Date())} | frame=${frame.frameId} | ${detections.size} objects\n" +
       "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | total ${"%.1f".format(performance.phoneTotalMs)} ms" +
-      if (detectionResult.trafficLightState != TrafficLightColorResult.UNKNOWN) {
-        " | signal=${detectionResult.trafficLightState} ${"%.0f".format(detectionResult.trafficLightConfidence * 100f)}%"
-      } else {
-        ""
-      }
+      trafficLightLine
     if (detections.isEmpty()) return "$header\n  객체 없음"
     val objects = detections.take(MAX_CONSOLE_OBJECTS).mapIndexed { index, detection ->
       val x1 = (detection.x1 * frame.width).roundToInt().coerceIn(0, frame.width)
@@ -389,6 +397,16 @@ class ExternalAIService : Service() {
       "traffic light" -> "신호등"
       "stop sign" -> "정지표지판"
       else -> className
+    }
+  }
+
+  private fun localizedTrafficLightState(state: String): String {
+    if (Locale.getDefault().language != Locale.KOREAN.language) return state
+    return when (state) {
+      TrafficLightColorResult.RED -> "빨강"
+      TrafficLightColorResult.YELLOW -> "노랑"
+      TrafficLightColorResult.GREEN -> "초록"
+      else -> "미확인"
     }
   }
 

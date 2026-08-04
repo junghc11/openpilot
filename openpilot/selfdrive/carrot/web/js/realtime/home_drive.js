@@ -336,6 +336,7 @@ window.HomeDrive = (() => {
     const model = overlayState?.modelV2;
     const radar = overlayState?.radarState;
     const liveCalibration = overlayState?.liveCalibration;
+    const phoneAIState = overlayState?.phoneAIState;
     const carState = hudState?.carState;
     const controlsState = hudState?.controlsState;
     const longPlan = hudState?.longitudinalPlan;
@@ -348,6 +349,11 @@ window.HomeDrive = (() => {
       finiteNumber(liveCalibration?.rpyCalib?.[1], 0).toFixed(3),
       finiteNumber(liveCalibration?.rpyCalib?.[2], 0).toFixed(3),
       liveCalibration?.calStatus ?? "-",
+      phoneAIState?.frameId ?? "-",
+      Boolean(phoneAIState?.valid) ? 1 : 0,
+      Boolean(phoneAIState?.connected) ? 1 : 0,
+      phoneAIState?.objects?.length ?? 0,
+      phoneAIState?.trafficLightState ?? "-",
       _roadCameraProfileKey,
       finiteNumber(liveCalibration?.height?.[0], 0).toFixed(2),
       Boolean(controlsState?.activeLaneLine) ? 1 : 0,
@@ -2092,6 +2098,12 @@ window.HomeDrive = (() => {
       displayDistance: displayDistanceMeters,
       clampTextAnchor,
       drawText: drawCanvasOutlinedText,
+      language: () => document.documentElement.lang || navigator.language || "en",
+      measureText: (text, fontSize) => getCachedTextWidth(ctx, `800 ${fontSize}px ${HUD_TEXT_FONT}`, String(text || "")),
+      drawRoundedBox: (x, y, width, height, radius, fillStyle, strokeStyle, lineWidth) => {
+        fillRoundedRect(ctx, x, y, width, height, radius, fillStyle);
+        strokeRoundedRect(ctx, x, y, width, height, radius, strokeStyle, lineWidth);
+      },
     },
   }) || null;
   if (!roadOverlayAuxRenderer) return {};
@@ -2658,6 +2670,13 @@ window.HomeDrive = (() => {
           videoHeight,
         );
       }
+      roadOverlayAuxRenderer.drawExternalAI(
+        overlayState.phoneAIState,
+        videoWidth,
+        videoHeight,
+        window.CarrotStateUpdatedAt?.phoneAIState,
+        Date.now(),
+      );
       endGeometryFrame();
     }
 
