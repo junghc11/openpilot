@@ -54,6 +54,7 @@ class TrafficLightStateStabilizer:
     self.required_samples = required_samples
     self.hold_seconds = hold_seconds
     self.state = "unknown"
+    self.visible = False
     self._candidate = "unknown"
     self._candidate_samples = 0
     self._last_sample_id: int | None = None
@@ -72,6 +73,7 @@ class TrafficLightStateStabilizer:
     now_value = time.monotonic() if now is None else float(now)
     if detected:
       self._last_detection_time = now_value
+    self.visible = detected or now_value - self._last_detection_time <= self.hold_seconds
 
     candidate = resolve_traffic_light_state(phone_state, model_state)
     if detected and candidate in TRAFFIC_LIGHT_STATES and sample_id != self._last_sample_id:
@@ -98,6 +100,7 @@ class TrafficLightStateStabilizer:
 
   def reset(self) -> None:
     self.state = "unknown"
+    self.visible = False
     self._candidate = "unknown"
     self._candidate_samples = 0
     self._last_sample_id = None

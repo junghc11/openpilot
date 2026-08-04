@@ -30,6 +30,8 @@ class ExternalAIOverlayRenderer:
     self._next_param_refresh = 0.0
     self._font = gui_app.font(FontWeight.SEMI_BOLD)
     self._font_display = gui_app.font(FontWeight.DISPLAY)
+    self._signal_red = gui_app.texture("images/traffic_red.png")
+    self._signal_green = gui_app.texture("images/traffic_green.png")
     self._traffic_light = TrafficLightStateStabilizer(required_samples=3, hold_seconds=1.5)
 
   def _refresh_enabled(self) -> None:
@@ -94,13 +96,14 @@ class ExternalAIOverlayRenderer:
       sample_id = int(state.frameId)
     except Exception:
       sample_id = 0
+    signal_detected = traffic_detected or model_traffic_state in (1, 2)
     stable_traffic_state = self._traffic_light.update(
-      detected=traffic_detected,
+      detected=signal_detected,
       phone_state=phone_traffic_state,
       model_state=model_traffic_state,
       sample_id=sample_id,
     )
-    if stable_traffic_state != "unknown":
+    if self._traffic_light.visible:
       self._draw_signal_indicator(rect, stable_traffic_state)
     self._draw_status(rect, status_text, connected)
     if compute_badge:
@@ -324,25 +327,44 @@ class ExternalAIOverlayRenderer:
       color,
     )
 
-  @staticmethod
-  def _draw_signal_indicator(rect: rl.Rectangle, state: str) -> None:
-    width = 58.0
-    height = 154.0
+  def _draw_signal_indicator(self, rect: rl.Rectangle, state: str) -> None:
+    width = 168.0
+    height = 72.0
     x = rect.x + rect.width - width - 18.0
-    y = rect.y + 18.0
+    signal_top = max(84.0, min(132.0, rect.height * 0.10))
+    y = rect.y + signal_top
     panel = rl.Rectangle(x, y, width, height)
-    rl.draw_rectangle_rounded(panel, 0.28, 10, rl.Color(7, 10, 13, 225))
-    rl.draw_rectangle_rounded_lines_ex(panel, 0.28, 10, 2.0, rl.Color(205, 218, 226, 190))
-    lamps = (
-      ("red", rl.Color(255, 56, 52, 255)),
-      ("yellow", rl.Color(255, 196, 38, 255)),
-      ("green", rl.Color(43, 224, 102, 255)),
-    )
-    for index, (lamp_state, active_color) in enumerate(lamps):
-      center_x = int(x + width * 0.5)
-      center_y = int(y + 29.0 + index * 48.0)
-      if lamp_state == state:
-        rl.draw_circle(center_x, center_y, 19.0, rl.Color(active_color.r, active_color.g, active_color.b, 70))
-        rl.draw_circle(center_x, center_y, 14.0, active_color)
-      else:
-        rl.draw_circle(center_x, center_y, 13.0, rl.Color(55, 61, 66, 210))
+    rl.draw_rectangle_rounded(panel, 0.20, 10, rl.Color(6, 10, 16, 235))
+    rl.draw_rectangle_rounded_lines_ex(panel, 0.20, 10, 2.0, rl.Color(118, 132, 145, 220))
+
+    lamp_y = int(y + height * 0.5)
+    left_x = int(x + 32.0)
+    center_x = int(x + width * 0.5)
+    right_x = int(x + width - 32.0)
+    inactive = rl.Color(21, 29, 40, 255)
+    inactive_outline = rl.Color(37, 48, 61, 235)
+    for lamp_x in (left_x, center_x, right_x):
+      rl.draw_circle(lamp_x, lamp_y, 22.0, inactive_outline)
+      rl.draw_circle(lamp_x, lamp_y, 18.0, inactive)
+
+    if state == "red":
+      rl.draw_texture_pro(
+        self._signal_red,
+        rl.Rectangle(66.0, 0.0, 64.0, 64.0),
+        rl.Rectangle(left_x - 24.0, lamp_y - 24.0, 48.0, 48.0),
+        rl.Vector2(0.0, 0.0),
+        0.0,
+        rl.WHITE,
+      )
+    elif state == "yellow":
+      rl.draw_circle(center_x, lamp_y, 23.0, rl.Color(255, 199, 45, 70))
+      rl.draw_circle(center_x, lamp_y, 17.0, rl.Color(255, 199, 45, 255))
+    elif state == "green":
+      rl.draw_texture_pro(
+        self._signal_green,
+        rl.Rectangle(126.0, 0.0, 64.0, 64.0),
+        rl.Rectangle(right_x - 24.0, lamp_y - 24.0, 48.0, 48.0),
+        rl.Vector2(0.0, 0.0),
+        0.0,
+        rl.WHITE,
+      )

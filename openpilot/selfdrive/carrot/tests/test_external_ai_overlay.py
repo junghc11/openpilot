@@ -203,18 +203,35 @@ def test_traffic_light_prefers_c3x_red_green_and_phone_yellow() -> None:
 
 def test_traffic_light_state_requires_three_phone_frames_and_holds_short_gaps() -> None:
   stabilizer = TrafficLightStateStabilizer(required_samples=3, hold_seconds=1.5)
+  assert not stabilizer.visible
   assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=1, now=1.0) == "unknown"
+  assert stabilizer.visible
   assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=2, now=1.2) == "unknown"
   assert stabilizer.update(detected=True, phone_state="red", model_state=0, sample_id=3, now=1.4) == "red"
   # Re-rendering one phone result must not count as another state sample.
   assert stabilizer.update(detected=True, phone_state="green", model_state=0, sample_id=3, now=1.5) == "red"
   assert stabilizer.update(detected=False, phone_state="unknown", model_state=0, sample_id=4, now=2.0) == "red"
   assert stabilizer.update(detected=False, phone_state="unknown", model_state=0, sample_id=5, now=3.1) == "unknown"
+  assert not stabilizer.visible
 
 
-def test_c3x_overlay_places_compute_badge_bottom_left_and_draws_signal_stack() -> None:
+def test_c3x_model_signal_alone_activates_stable_external_signal_indicator() -> None:
+  stabilizer = TrafficLightStateStabilizer(required_samples=3, hold_seconds=1.5)
+  assert stabilizer.update(detected=True, phone_state="unknown", model_state=2, sample_id=1, now=1.0) == "unknown"
+  assert stabilizer.update(detected=True, phone_state="unknown", model_state=2, sample_id=2, now=1.2) == "unknown"
+  assert stabilizer.update(detected=True, phone_state="unknown", model_state=2, sample_id=3, now=1.4) == "green"
+  assert stabilizer.visible
+
+
+def test_c3x_overlay_places_compute_badge_bottom_left_and_draws_signal_panel() -> None:
   renderer_source = (OPENPILOT_ROOT / "selfdrive" / "ui" / "onroad" / "external_ai_overlay.py").read_text(encoding="utf-8")
   assert "status_top = max(84.0, min(132.0, rect.height * 0.10))" in renderer_source
+  assert "signal_detected = traffic_detected or model_traffic_state in (1, 2)" in renderer_source
+  assert "if self._traffic_light.visible:" in renderer_source
+  assert "for lamp_x in (left_x, center_x, right_x):" in renderer_source
+  assert "_signal_left_arrow" not in renderer_source
+  assert "width = 168.0" in renderer_source
+  assert "height = 72.0" in renderer_source
   assert "x = rect.x + 14.0" in renderer_source
   assert "y = rect.y + rect.height - height - 14.0" in renderer_source
   assert "def _draw_signal_indicator" in renderer_source
