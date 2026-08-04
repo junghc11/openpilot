@@ -401,13 +401,31 @@ class YoloDetector(
     return try {
       val qnnDevices = qnnEpDevices()
       if (requireFullGraph) {
-        val qnnOptions = createQnnOptions(qnnDevices, requireFullGraph = true)
+        val graphId = SystemClock.elapsedRealtimeNanos()
+        val qnnGraphDir = File(modelFile.parentFile, "qnn-strict-graph-$graphId").apply {
+          check(mkdirs() || isDirectory) { "QNN 진단 폴더를 만들지 못했습니다: $absolutePath" }
+        }
+        val qnnOptions = try {
+          createQnnOptions(
+            qnnDevices,
+            requireFullGraph = true,
+            qnnGraphDir = qnnGraphDir.absolutePath,
+          )
+        } catch (error: Throwable) {
+          inspectQnnGraphDump(qnnGraphDir)
+          throw error
+        }
         val session = try {
           createAndWarmSession(modelFile, qnnOptions)
         } catch (error: Throwable) {
           qnnOptions.close()
-          throw error
+          val graphEvidence = inspectQnnGraphDump(qnnGraphDir)
+          throw IllegalStateException(
+            "${graphEvidence.compactLabel()} · ${diagnosticError(error)}",
+            error,
+          )
         }
+        inspectQnnGraphDump(qnnGraphDir)
         return QnnAttempt(
           setup = SessionSetup(
             options = qnnOptions,
@@ -424,15 +442,28 @@ class YoloDetector(
       val profileId = SystemClock.elapsedRealtimeNanos()
       val ortProfilePrefix = File(modelFile.parentFile, "ort-qnn-mixed-$profileId").absolutePath
       val qnnProfileFile = File(modelFile.parentFile, "qnn-htp-mixed-$profileId.csv")
-      val ortEvidence = createQnnOptions(
-        qnnDevices,
-        ortProfilePrefix = ortProfilePrefix,
-        qnnProfilePath = qnnProfileFile.absolutePath,
-      ).use { probeOptions ->
-        createAndWarmSession(modelFile, probeOptions).use(::finishProfilingAndInspect)
+      val qnnGraphDir = File(modelFile.parentFile, "qnn-mixed-graph-$profileId").apply {
+        check(mkdirs() || isDirectory) { "QNN 진단 폴더를 만들지 못했습니다: $absolutePath" }
+      }
+      val ortEvidence = try {
+        createQnnOptions(
+          qnnDevices,
+          ortProfilePrefix = ortProfilePrefix,
+          qnnProfilePath = qnnProfileFile.absolutePath,
+          qnnGraphDir = qnnGraphDir.absolutePath,
+        ).use { probeOptions ->
+          createAndWarmSession(modelFile, probeOptions).use(::finishProfilingAndInspect)
+        }
+      } catch (error: Throwable) {
+        inspectQnnProfile(qnnProfileFile)
+        inspectQnnGraphDump(qnnGraphDir)
+        throw error
       }
       val qnnEvidence = inspectQnnProfile(qnnProfileFile)
-      val qnnObserved = ortEvidence.qnnNodeCount > 0 || qnnEvidence.executeEventCount > 0
+      val graphEvidence = inspectQnnGraphDump(qnnGraphDir)
+      val qnnObserved = ortEvidence.qnnNodeCount > 0 ||
+        qnnEvidence.executeEventCount > 0 ||
+        graphEvidence.graphCount > 0
 
       val runtimeOptions = createQnnOptions(qnnDevices)
       val runtimeSession = try {
@@ -448,6 +479,7 @@ class YoloDetector(
           add("HTP 실행 이벤트 미확인")
         }
         add("ORT QNN 노드 ${ortEvidence.qnnNodeCount} · CPU 노드 ${ortEvidence.cpuNodeCount}")
+        add(graphEvidence.compactLabel())
         qnnEvidence.error?.let { add("QNN 프로파일 $it") }
         ortEvidence.error?.let { add("ORT 프로파일 $it") }
       }.joinToString(" · ")
@@ -483,6 +515,7 @@ class YoloDetector(
     requireFullGraph: Boolean = false,
     ortProfilePrefix: String? = null,
     qnnProfilePath: String? = null,
+    qnnGraphDir: String? = null,
   ): OrtSession.SessionOptions {
     val options = createBaseOptions()
     return try {
@@ -504,8 +537,12 @@ class YoloDetector(
         "offload_graph_io_quantization" to "0",
       )
       if (qnnProfilePath != null) {
-        providerOptions["profiling_level"] = "basic"
+        providerOptions["profiling_level"] = "detailed"
         providerOptions["profiling_file_path"] = qnnProfilePath
+      }
+      if (qnnGraphDir != null) {
+        providerOptions["dump_json_qnn_graph"] = "1"
+        providerOptions["json_qnn_graph_dir"] = qnnGraphDir
       }
       options.addExecutionProvider(qnnDevices, providerOptions)
       options
@@ -575,6 +612,29 @@ class YoloDetector(
     } finally {
       profileFile.delete()
       qnnLog.delete()
+    }
+  }
+
+  private fun inspectQnnGraphDump(graphDir: File): QnnGraphEvidence {
+    return try {
+      val files = if (graphDir.isDirectory) {
+        graphDir.walkTopDown().filter { it.isFile }.toList()
+      } else {
+        emptyList()
+      }
+      val jsonFiles = files.filter { it.extension.equals("json", ignoreCase = true) }
+      QnnGraphEvidence(
+        graphCount = jsonFiles.size,
+        totalBytes = jsonFiles.sumOf(File::length),
+        error = if (jsonFiles.isEmpty()) "JSON 없음" else null,
+      )
+    } catch (error: Exception) {
+      Log.w(TAG, "QNN graph dump inspect failed: ${diagnosticError(error)}")
+      QnnGraphEvidence(error = "확인 실패: ${shortError(error)}")
+    } finally {
+      if (graphDir.isDirectory) {
+        graphDir.walkBottomUp().forEach(File::delete)
+      }
     }
   }
 
@@ -720,7 +780,7 @@ class YoloDetector(
       .take(800)
 
   private fun qnnErrorLabel(stage: String, error: Throwable): String {
-    val message = error.message.orEmpty()
+    val message = diagnosticError(error)
     val reason = when {
       message.contains("default CPU EP", ignoreCase = true) -> "모델 그래프 일부 HTP 미지원"
       message.contains("dynamic", ignoreCase = true) -> "동적 shape 미지원"
@@ -775,6 +835,18 @@ class YoloDetector(
     val executeEventCount: Int = 0,
     val error: String? = null,
   )
+
+  private data class QnnGraphEvidence(
+    val graphCount: Int = 0,
+    val totalBytes: Long = 0L,
+    val error: String? = null,
+  ) {
+    fun compactLabel(): String = if (graphCount > 0) {
+      "QNN 부분 그래프 ${graphCount}개 · JSON ${totalBytes / 1_024} KB"
+    } else {
+      "QNN 부분 그래프 없음${error?.let { "($it)" }.orEmpty()}"
+    }
+  }
 
   companion object {
     private const val TAG = "CarrotExternalAI"

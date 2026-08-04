@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.15.3"' in gradle
+  assert 'versionName = "0.15.4"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -96,10 +96,14 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'backend = "onnxruntime-qnn"' in qnn_setup
   assert '"onnxruntime-qnn-mixed"' in qnn_setup
   assert '"onnxruntime-qnn-mixed-unverified"' in qnn_setup
-  assert 'providerOptions["profiling_level"] = "basic"' in qnn_setup
+  assert 'providerOptions["profiling_level"] = "detailed"' in qnn_setup
   assert 'providerOptions["profiling_file_path"] = qnnProfilePath' in qnn_setup
+  assert 'providerOptions["dump_json_qnn_graph"] = "1"' in qnn_setup
+  assert 'providerOptions["json_qnn_graph_dir"] = qnnGraphDir' in qnn_setup
   assert 'finishProfilingAndInspect' in qnn_setup
   assert 'inspectQnnProfile' in qnn_setup
+  assert 'inspectQnnGraphDump' in qnn_setup
+  assert 'QNN 부분 그래프 ${graphCount}개' in detector
   assert 'HTP 실행 ${qnnEvidence.executeEventCount}건' in qnn_setup
   assert "createAndWarmSession(modelFile, qnnOptions)" in qnn_setup
   assert "candidate.run(mapOf(candidateInputName to input))" in detector
