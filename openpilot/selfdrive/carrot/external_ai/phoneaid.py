@@ -12,6 +12,8 @@ from openpilot.selfdrive.carrot.external_ai.frame_sender import (
   DEFAULT_FRAME_FPS,
   DEFAULT_FRAME_PORT,
   DEFAULT_JPEG_QUALITY,
+  H264_FALLBACK_SOURCE,
+  H264_SOURCE,
   H264FrameCapture,
   RoadFrameCapture,
   VideoFrameTcpServer,
@@ -77,16 +79,31 @@ class PhoneAIDaemon:
     self.transport = _clamped_param_int(self.params, "ExternalAITransport", DEFAULT_TRANSPORT, TRANSPORT_JPEG, TRANSPORT_H264)
     youtube_live = _clamped_param_int(self.params, "CarrotYouTubeLive", 0, 0, 1)
     youtube_quality = _clamped_param_int(self.params, "CarrotYouTubeQuality", 0, 0, 3)
-    h264_source_compatible = youtube_live == 0 or youtube_quality == 0
-    use_h264 = self.transport == TRANSPORT_H264 and h264_source_compatible
+    use_h264 = self.transport == TRANSPORT_H264
     queue = AdaptiveFrameQueue() if use_h264 else None
     self.frame_server = VideoFrameTcpServer(port=frame_port, allowed_phone_ip=allowed_phone_ip, slot=queue)
-    self.h264_capture = H264FrameCapture(self.frame_server, messaging_module) if use_h264 else None
+    # The low YouTube/dedicated External AI stream is road-camera 854x480. For
+    # higher/wide YouTube profiles, use the always-on road qcamera stream so the
+    # phone is not forced to decode 720p/1080p or a projection-mismatched wide feed.
+    primary_h264_source = (
+      H264_SOURCE
+      if youtube_live == 0 or youtube_quality == 0
+      else H264_FALLBACK_SOURCE
+    )
+    self.h264_capture = (
+      H264FrameCapture(
+        self.frame_server,
+        messaging_module,
+        source=primary_h264_source,
+        fallback_source=H264_FALLBACK_SOURCE,
+      )
+      if use_h264 else None
+    )
     self.frame_capture = RoadFrameCapture(
       self.frame_server,
       fps=frame_fps,
       jpeg_quality=jpeg_quality,
-      should_encode=(lambda: not self.h264_capture.is_recent) if self.h264_capture is not None else None,
+      should_encode=self.h264_capture.should_fallback_to_jpeg if self.h264_capture is not None else None,
     )
     self.pm = messaging_module.PubMaster(["phoneAIState"])
 

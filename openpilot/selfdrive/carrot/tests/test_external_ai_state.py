@@ -6,7 +6,7 @@ from openpilot.selfdrive.carrot.external_ai.protocol import parse_external_ai_re
 from openpilot.selfdrive.carrot.external_ai.receiver import ExternalAIReceiverStats
 from openpilot.selfdrive.carrot.external_ai.state import build_phone_ai_payload
 from openpilot.selfdrive.carrot.external_ai.phoneaid import PhoneAIDaemon
-from openpilot.selfdrive.carrot.external_ai.frame_sender import AdaptiveFrameQueue, LatestFrameSlot
+from openpilot.selfdrive.carrot.external_ai.frame_sender import AdaptiveFrameQueue, H264_FALLBACK_SOURCE, LatestFrameSlot
 
 
 OPENPILOT_ROOT = Path(__file__).resolve().parents[3]
@@ -171,7 +171,7 @@ def test_phoneaid_publishes_cereal_payload_with_injected_runtime() -> None:
   assert daemon.pm.sent[0][1].phoneAIState == payload
 
 
-def test_phoneaid_selects_h264_queue_and_avoids_incompatible_youtube_profiles() -> None:
+def test_phoneaid_keeps_h264_for_every_youtube_profile() -> None:
   class FakeParams:
     def __init__(self, transport, youtube_live, youtube_quality):
       self.values = {
@@ -195,9 +195,11 @@ def test_phoneaid_selects_h264_queue_and_avoids_incompatible_youtube_profiles() 
   assert isinstance(h264.frame_server.slot, AdaptiveFrameQueue)
   assert h264.h264_capture is not None
 
-  youtube_high = PhoneAIDaemon(params=FakeParams(1, 1, 2), messaging_module=FakeMessaging)
-  assert isinstance(youtube_high.frame_server.slot, LatestFrameSlot)
-  assert youtube_high.h264_capture is None
+  for quality in (1, 2, 3):
+    youtube_high = PhoneAIDaemon(params=FakeParams(1, 1, quality), messaging_module=FakeMessaging)
+    assert isinstance(youtube_high.frame_server.slot, AdaptiveFrameQueue)
+    assert youtube_high.h264_capture is not None
+    assert youtube_high.h264_capture.sources == (H264_FALLBACK_SOURCE,)
 
   jpeg = PhoneAIDaemon(params=FakeParams(0, 0, 0), messaging_module=FakeMessaging)
   assert isinstance(jpeg.frame_server.slot, LatestFrameSlot)

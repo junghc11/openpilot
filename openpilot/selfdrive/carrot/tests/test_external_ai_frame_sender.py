@@ -8,6 +8,8 @@ from PIL import Image
 from openpilot.selfdrive.carrot.external_ai.frame_protocol import H264Frame, VideoFrame, encode_video_frame, receive_encoded_video_frame, receive_video_frame
 from openpilot.selfdrive.carrot.external_ai.frame_sender import (
   AdaptiveFrameQueue,
+  H264_FALLBACK_TIMEOUT_S,
+  H264FrameCapture,
   LatestFrameSlot,
   VideoFrameTcpServer,
   h264_packet_from_encode_data,
@@ -50,6 +52,33 @@ def test_h264_queue_overflow_resumes_only_at_next_keyframe() -> None:
 
   queue.put(b"idr-2", encoding="h264", keyframe=True)
   assert queue.wait_after(0, 0.0)[1] == b"idr-2"
+
+
+def test_h264_capture_switches_sources_only_on_keyframes() -> None:
+  capture = H264FrameCapture(SimpleNamespace(), source="primary", fallback_source="fallback")
+
+  assert capture._accept_source("fallback", keyframe=False, now=1.0) == (False, False)
+  assert capture._accept_source("fallback", keyframe=True, now=1.1) == (True, True)
+  assert capture.active_source == "fallback"
+  assert capture._accept_source("primary", keyframe=False, now=1.2) == (False, False)
+  assert capture._accept_source("primary", keyframe=True, now=1.3) == (True, True)
+  assert capture.active_source == "primary"
+  assert capture._accept_source("fallback", keyframe=True, now=1.5) == (False, False)
+  assert capture._accept_source("fallback", keyframe=True, now=2.5) == (True, True)
+
+
+def test_h264_capture_delays_jpeg_until_recovery_timeout() -> None:
+  capture = H264FrameCapture(SimpleNamespace())
+  now = time.monotonic()
+  capture._set_connected(True, now=now)
+  assert capture.should_fallback_to_jpeg() is False
+
+  with capture._state_lock:
+    capture._connected_at = now - H264_FALLBACK_TIMEOUT_S - 0.1
+  assert capture.should_fallback_to_jpeg() is True
+
+  capture._mark_frame_sent(time.monotonic())
+  assert capture.should_fallback_to_jpeg() is False
 
 
 def test_encode_data_is_framed_with_c3x_timestamp_and_codec_config() -> None:

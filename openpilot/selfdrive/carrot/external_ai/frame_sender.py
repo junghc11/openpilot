@@ -18,7 +18,9 @@ DEFAULT_JPEG_QUALITY = 75
 OUTPUT_WIDTH = 640
 OUTPUT_HEIGHT = 360
 H264_SOURCE = "youtubeRoadEncodeData"
+H264_FALLBACK_SOURCE = "qRoadEncodeData"
 H264_FALLBACK_TIMEOUT_S = 3.0
+H264_SOURCE_STALE_TIMEOUT_S = 1.0
 H264_QUEUE_MAX_FRAMES = 60
 H264_QUEUE_MAX_BYTES = 2 * 1024 * 1024
 
@@ -359,25 +361,50 @@ class RoadFrameCapture:
         print(f"External AI frame encode failed: {exc}", flush=True)
         self._stop.wait(0.5)
         continue
+      # H.264 may have recovered while the comparatively expensive JPEG was
+      # being encoded. Do not let that stale fallback displace the new stream.
+      if self.should_encode is not None and not self.should_encode():
+        continue
       self.server.slot.put(packet)
       next_frame_at = now + 1.0 / self.fps
 
 
 class H264FrameCapture:
-  """Relays every encoded access unit and restarts only from an IDR after a gap."""
+  """Relays the best live H.264 source and changes sources only at an IDR."""
 
   def __init__(self, server: VideoFrameTcpServer, messaging_module: Any | None = None,
-               *, source: str = H264_SOURCE) -> None:
+               *, source: str = H264_SOURCE,
+               fallback_source: str = H264_FALLBACK_SOURCE) -> None:
     self.server = server
     self.messaging = messaging_module
     self.source = source
+    self.sources = tuple(dict.fromkeys((source, fallback_source)))
     self._stop = threading.Event()
     self._thread: threading.Thread | None = None
+    self._state_lock = threading.Lock()
     self._last_frame_at = 0.0
+    self._connected_at = 0.0
+    self._active_source = ""
+    self._last_source_frame_at: dict[str, float] = {}
 
   @property
   def is_recent(self) -> bool:
-    return self._last_frame_at > 0.0 and (time.monotonic() - self._last_frame_at) < H264_FALLBACK_TIMEOUT_S
+    with self._state_lock:
+      last_frame_at = self._last_frame_at
+    return last_frame_at > 0.0 and (time.monotonic() - last_frame_at) < H264_FALLBACK_TIMEOUT_S
+
+  @property
+  def active_source(self) -> str:
+    with self._state_lock:
+      return self._active_source
+
+  def should_fallback_to_jpeg(self) -> bool:
+    """Hold JPEG during H.264 startup/recovery instead of racing the first IDR."""
+    now = time.monotonic()
+    with self._state_lock:
+      if self._last_frame_at > 0.0 and now - self._last_frame_at < H264_FALLBACK_TIMEOUT_S:
+        return False
+      return self._connected_at > 0.0 and now - self._connected_at >= H264_FALLBACK_TIMEOUT_S
 
   def start(self) -> None:
     if self._thread is None:
@@ -390,41 +417,94 @@ class H264FrameCapture:
       self._thread.join(timeout=2.0)
     self._thread = None
 
+  def _set_connected(self, connected: bool, *, now: float | None = None) -> None:
+    with self._state_lock:
+      if connected:
+        if self._connected_at <= 0.0:
+          self._connected_at = time.monotonic() if now is None else now
+      else:
+        self._connected_at = 0.0
+        self._last_frame_at = 0.0
+        self._active_source = ""
+        self._last_source_frame_at.clear()
+
+  def _accept_source(self, source: str, *, keyframe: bool, now: float) -> tuple[bool, bool]:
+    """Return (accept, switched); a decoder-changing source switch requires an IDR."""
+    with self._state_lock:
+      self._last_source_frame_at[source] = now
+      active_source = self._active_source
+      if source == active_source:
+        return True, False
+
+      if not keyframe:
+        return False, False
+
+      if not active_source:
+        self._active_source = source
+        return True, True
+
+      source_priority = self.sources.index(source)
+      active_priority = self.sources.index(active_source)
+      active_last_frame_at = self._last_source_frame_at.get(active_source, 0.0)
+      if source_priority < active_priority or now - active_last_frame_at >= H264_SOURCE_STALE_TIMEOUT_S:
+        self._active_source = source
+        return True, True
+      return False, False
+
+  def _mark_frame_sent(self, now: float) -> None:
+    with self._state_lock:
+      self._last_frame_at = now
+
   def _run(self) -> None:
     if self.messaging is None:
       from openpilot.cereal import messaging as messaging_module
       self.messaging = messaging_module
-    sock = None
+    socks: dict[str, Any] = {}
     try:
       while not self._stop.is_set():
         if not self.server.client_connected.wait(timeout=0.25):
-          if sock is not None:
+          for sock in socks.values():
             sock.close()
-            sock = None
+          socks.clear()
+          self._set_connected(False)
           continue
-        if sock is None:
-          sock = self.messaging.sub_sock(self.source, conflate=False)
-        message = self.messaging.recv_one_or_none(sock)
-        if message is None:
+        self._set_connected(True)
+        if not socks:
+          socks = {source: self.messaging.sub_sock(source, conflate=False) for source in self.sources}
+
+        received_message = False
+        for source, sock in socks.items():
+          message = self.messaging.recv_one_or_none(sock)
+          if message is None:
+            continue
+          received_message = True
+          encoded = getattr(message, source, None)
+          if encoded is None:
+            continue
+          try:
+            encoded_packet = h264_packet_from_encode_data(encoded)
+          except Exception as exc:
+            print(f"External AI H.264 packet rejected from {source}: {exc}", flush=True)
+            continue
+          if encoded_packet is None:
+            continue
+          packet, keyframe = encoded_packet
+          now = time.monotonic()
+          accept, switched = self._accept_source(source, keyframe=keyframe, now=now)
+          if not accept:
+            continue
+          slot = self.server.slot
+          if switched:
+            slot.reset()
+            print(f"External AI H.264 source: {source}", flush=True)
+          if isinstance(slot, AdaptiveFrameQueue):
+            slot.put(packet, encoding="h264", keyframe=keyframe)
+          else:
+            slot.put(packet)
+          self._mark_frame_sent(now)
+        if not received_message:
           self._stop.wait(0.005)
-          continue
-        encoded = getattr(message, self.source, None)
-        if encoded is None:
-          continue
-        try:
-          encoded_packet = h264_packet_from_encode_data(encoded)
-        except Exception as exc:
-          print(f"External AI H.264 packet rejected: {exc}", flush=True)
-          continue
-        if encoded_packet is None:
-          continue
-        packet, keyframe = encoded_packet
-        slot = self.server.slot
-        if isinstance(slot, AdaptiveFrameQueue):
-          slot.put(packet, encoding="h264", keyframe=keyframe)
-        else:
-          slot.put(packet)
-        self._last_frame_at = time.monotonic()
     finally:
-      if sock is not None:
+      for sock in socks.values():
         sock.close()
+      self._set_connected(False)

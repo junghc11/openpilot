@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.15.0"' in gradle
+  assert 'versionName = "0.15.1"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -314,6 +314,8 @@ def test_android_client_decodes_local_h264_with_mediacodec_and_keeps_jpeg_fallba
   assert "h264Magic" in protocol
   assert "codec_config_size" in protocol
   assert "ReusableH264Decoder().use" in service
+  assert "codecConfigurationChanged" in decoder
+  assert "frame.codecConfig.contentEquals(configuredCodecConfig)" in decoder
   assert "ReusableJpegDecoder().use" in service
   assert "MediaCodec.createDecoderByType" in decoder
   assert "MediaFormat.KEY_LOW_LATENCY" in decoder

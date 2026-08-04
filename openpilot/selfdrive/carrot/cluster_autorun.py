@@ -29,6 +29,7 @@ RETRY_INTERVAL_S = 5.0
 HUD_CHECK_INTERVAL_S = 0.1
 USB_FALLBACK_SCAN_INTERVAL_S = 5.0
 USB_OFF_DIM_INTERVAL_S = 30.0
+JPEG_FALLBACK_H264_RETRY_S = 30.0
 NETLINK_KOBJECT_UEVENT = 15
 AUTORUN_FPS_ENV = "CLUSTER_AUTORUN_FPS"
 REALTIME_CORES_ENV = "CLUSTER_REALTIME_CORES"
@@ -280,6 +281,10 @@ def _cluster_args(
     if output_mode in ("usb", "both"):
         # Standalone carrot_navi owns TCP 7714; live input consumes its carrotNavi cereal service.
         args[4:4] = _encoder_args(active_encoder_mode)
+        if configured_encoder_mode == ENCODER_AUTO and active_encoder_mode == ENCODER_JPEG:
+            # Keep the display alive temporarily, then return to the supervisor so
+            # native/software H.264 are retried instead of remaining on JPEG forever.
+            args.extend(["--duration", str(JPEG_FALLBACK_H264_RETRY_S)])
     fps = os.environ.get(AUTORUN_FPS_ENV, "").strip()
     if fps:
         args.extend(["--fps", fps])

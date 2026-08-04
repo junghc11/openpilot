@@ -29,6 +29,7 @@ class ReusableH264Decoder : AutoCloseable {
   private var callbackThread: HandlerThread? = null
   private var width = 0
   private var height = 0
+  private var configuredCodecConfig = ByteArray(0)
   private var pixels = IntArray(0)
   private var bitmap: Bitmap? = null
   private val pendingByPts = LinkedHashMap<Long, PendingFrame>()
@@ -37,7 +38,9 @@ class ReusableH264Decoder : AutoCloseable {
 
   fun decode(frame: C3XFrame, wantBitmap: Boolean): DecodedH264Frame? {
     require(frame.encoding == FrameProtocol.ENCODING_H264)
-    if (codec == null || frame.width != width || frame.height != height) {
+    val codecConfigurationChanged = frame.codecConfig.isNotEmpty() &&
+      !frame.codecConfig.contentEquals(configuredCodecConfig)
+    if (codec == null || frame.width != width || frame.height != height || codecConfigurationChanged) {
       releaseCodec()
       if (frame.codecConfig.isEmpty()) return null
       configure(frame.width, frame.height, frame.codecConfig)
@@ -77,6 +80,7 @@ class ReusableH264Decoder : AutoCloseable {
   private fun configure(frameWidth: Int, frameHeight: Int, codecConfig: ByteArray) {
     width = frameWidth
     height = frameHeight
+    configuredCodecConfig = codecConfig.copyOf()
     pixels = IntArray(width * height)
     bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     callbackThread = HandlerThread("external-ai-h264-images").apply { start() }
@@ -178,6 +182,7 @@ class ReusableH264Decoder : AutoCloseable {
     pixels = IntArray(0)
     width = 0
     height = 0
+    configuredCodecConfig = ByteArray(0)
   }
 
   fun reset() = releaseCodec()
