@@ -16,8 +16,8 @@ android {
     applicationId = "ai.carrotpilot.external"
     minSdk = 29
     targetSdk = 35
-    versionCode = 15
-    versionName = "0.12.0"
+    versionCode = 17
+    versionName = "0.12.2"
     buildConfigField("boolean", "QNN_EP_INCLUDED", qnnEpIncluded.toString())
     ndk {
       abiFilters += targetAbi

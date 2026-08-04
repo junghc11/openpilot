@@ -273,63 +273,120 @@ class YoloDetector(
     requireFullGraph: Boolean,
     strictFailure: Throwable? = null,
   ): QnnAttempt {
-    val qnnOptions = createBaseOptions()
     return try {
       val qnnDevices = qnnEpDevices()
       if (requireFullGraph) {
-        // Keep eNPU strict: every operator must stay on HTP and the warm-up must complete.
-        qnnOptions.addConfigEntry("session.disable_cpu_ep_fallback", "1")
-      } else {
-        // A mixed retry can still accelerate supported subgraphs instead of discarding QNN
-        // completely because one YOLO output operator requires the CPU EP.
-        qnnOptions.enableProfiling(
-          File(modelFile.parentFile, "ort-qnn-mixed-${SystemClock.elapsedRealtimeNanos()}").absolutePath,
+        val qnnOptions = createQnnOptions(qnnDevices, requireFullGraph = true)
+        val session = try {
+          createAndWarmSession(modelFile, qnnOptions)
+        } catch (error: Throwable) {
+          qnnOptions.close()
+          throw error
+        }
+        return QnnAttempt(
+          setup = SessionSetup(
+            options = qnnOptions,
+            session = session,
+            backend = "onnxruntime-qnn",
+            backendLabel = "$QNN_STACK_LABEL · Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)",
+          ),
         )
       }
-      // Ultralytics names its dynamic axes batch/height/width. QNN requires concrete shapes,
-      // so bind the downloaded dynamic model to the input size selected in the app.
-      qnnOptions.setSymbolicDimensionValue("batch", 1L)
-      qnnOptions.setSymbolicDimensionValue("height", dynamicInputSize.toLong())
-      qnnOptions.setSymbolicDimensionValue("width", dynamicInputSize.toLong())
-      qnnOptions.addExecutionProvider(qnnDevices, mapOf(
-        "backend_path" to "libQnnHtp.so",
-        "htp_performance_mode" to "sustained_high_performance",
-        "htp_graph_finalization_optimization_mode" to "3",
-        "enable_htp_fp16_precision" to "1",
-        "offload_graph_io_quantization" to "0",
-      ))
-      val session = createAndWarmSession(modelFile, qnnOptions)
-      val qnnProfileObserved = if (requireFullGraph) {
-        true
+
+      // A short-lived probe uses both the ORT timeline and QNN's HTP profiler. The real
+      // inference session is recreated without profiling so continuous driving does not
+      // pay the profiling overhead or keep writing trace files.
+      val profileId = SystemClock.elapsedRealtimeNanos()
+      val ortProfilePrefix = File(modelFile.parentFile, "ort-qnn-mixed-$profileId").absolutePath
+      val qnnProfileFile = File(modelFile.parentFile, "qnn-htp-mixed-$profileId.csv")
+      val ortEvidence = createQnnOptions(
+        qnnDevices,
+        ortProfilePrefix = ortProfilePrefix,
+        qnnProfilePath = qnnProfileFile.absolutePath,
+      ).use { probeOptions ->
+        createAndWarmSession(modelFile, probeOptions).use(::finishProfilingAndInspect)
+      }
+      val qnnEvidence = inspectQnnProfile(qnnProfileFile)
+      val qnnObserved = ortEvidence.qnnNodeCount > 0 || qnnEvidence.executeEventCount > 0
+
+      val runtimeOptions = createQnnOptions(qnnDevices)
+      val runtimeSession = try {
+        createAndWarmSession(modelFile, runtimeOptions)
+      } catch (error: Throwable) {
+        runtimeOptions.close()
+        throw error
+      }
+      val evidenceLabel = buildList {
+        if (qnnEvidence.executeEventCount > 0) {
+          add("HTP 실행 ${qnnEvidence.executeEventCount}건")
+        } else {
+          add("HTP 실행 이벤트 미확인")
+        }
+        add("ORT QNN 노드 ${ortEvidence.qnnNodeCount} · CPU 노드 ${ortEvidence.cpuNodeCount}")
+        qnnEvidence.error?.let { add("QNN 프로파일 $it") }
+        ortEvidence.error?.let { add("ORT 프로파일 $it") }
+      }.joinToString(" · ")
+      val backend = if (qnnObserved) {
+        "onnxruntime-qnn-mixed"
       } else {
-        finishProfilingAndFindQnn(session)
+        "onnxruntime-qnn-mixed-unverified"
       }
-      val backend = when {
-        requireFullGraph -> "onnxruntime-qnn"
-        qnnProfileObserved -> "onnxruntime-qnn-mixed"
-        else -> "onnxruntime-qnn-mixed-unverified"
-      }
-      val backendLabel = when {
-        requireFullGraph -> "Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)"
-        qnnProfileObserved -> "Qualcomm QNN/HTP + CPU 혼합 · QNN 노드 실행 확인 · 전체 그래프 실패: ${shortError(strictFailure)}"
-        else -> "QNN 혼합 세션 예열 완료 · ORT 프로파일에서 QNN 노드 확인 불가 · 전체 그래프 실패: ${shortError(strictFailure)}"
+      val backendLabel = if (qnnObserved) {
+        "Qualcomm QNN/HTP + CPU 혼합 · $evidenceLabel · 전체 그래프 실패: ${shortError(strictFailure)}"
+      } else {
+        "QNN 혼합 세션 예열 완료 · $evidenceLabel · 전체 그래프 실패: ${shortError(strictFailure)}"
       }
       QnnAttempt(
         setup = SessionSetup(
-          options = qnnOptions,
-          session = session,
+          options = runtimeOptions,
+          session = runtimeSession,
           backend = backend,
           backendLabel = "$QNN_STACK_LABEL · $backendLabel",
         ),
       )
     } catch (error: Exception) {
-      qnnOptions.close()
       Log.w(TAG, "QNN ${if (requireFullGraph) "full" else "mixed"} failed: ${diagnosticError(error)}")
       QnnAttempt(error = error)
     } catch (error: LinkageError) {
-      qnnOptions.close()
       Log.w(TAG, "QNN native load failed: ${diagnosticError(error)}")
       QnnAttempt(error = error)
+    }
+  }
+
+  private fun createQnnOptions(
+    qnnDevices: List<OrtEpDevice>,
+    requireFullGraph: Boolean = false,
+    ortProfilePrefix: String? = null,
+    qnnProfilePath: String? = null,
+  ): OrtSession.SessionOptions {
+    val options = createBaseOptions()
+    return try {
+      if (requireFullGraph) {
+        // Keep eNPU strict: every operator must stay on HTP and the warm-up must complete.
+        options.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+      }
+      ortProfilePrefix?.let(options::enableProfiling)
+      // Ultralytics names its dynamic axes batch/height/width. QNN requires concrete shapes,
+      // so bind the downloaded dynamic model to the input size selected in the app.
+      options.setSymbolicDimensionValue("batch", 1L)
+      options.setSymbolicDimensionValue("height", dynamicInputSize.toLong())
+      options.setSymbolicDimensionValue("width", dynamicInputSize.toLong())
+      val providerOptions = mutableMapOf(
+        "backend_path" to "libQnnHtp.so",
+        "htp_performance_mode" to "sustained_high_performance",
+        "htp_graph_finalization_optimization_mode" to "3",
+        "enable_htp_fp16_precision" to "1",
+        "offload_graph_io_quantization" to "0",
+      )
+      if (qnnProfilePath != null) {
+        providerOptions["profiling_level"] = "basic"
+        providerOptions["profiling_file_path"] = qnnProfilePath
+      }
+      options.addExecutionProvider(qnnDevices, providerOptions)
+      options
+    } catch (error: Throwable) {
+      options.close()
+      throw error
     }
   }
 
@@ -345,26 +402,54 @@ class YoloDetector(
     }
   }
 
-  private fun finishProfilingAndFindQnn(session: OrtSession): Boolean {
+  private fun finishProfilingAndInspect(session: OrtSession): OrtProfileEvidence {
     val profilePath = try {
       session.endProfiling()
     } catch (error: Exception) {
       Log.w(TAG, "ORT QNN profile finish failed: ${diagnosticError(error)}")
-      return false
+      return OrtProfileEvidence(error = "종료 실패: ${shortError(error)}")
     }
     val profileFile = File(profilePath)
     return try {
       val events = JSONArray(profileFile.readText())
-      (0 until events.length()).any { index ->
+      val providers = (0 until events.length()).mapNotNull { index ->
         events.optJSONObject(index)
           ?.optJSONObject("args")
-          ?.optString("provider") == QNN_EP_NAME
+          ?.optString("provider")
+          ?.takeIf(String::isNotBlank)
       }
+      OrtProfileEvidence(
+        qnnNodeCount = providers.count { it.equals(QNN_EP_NAME, ignoreCase = true) },
+        cpuNodeCount = providers.count { it.equals(CPU_EP_NAME, ignoreCase = true) },
+      )
     } catch (error: Exception) {
       Log.w(TAG, "ORT QNN profile parse failed: ${diagnosticError(error)}")
-      false
+      OrtProfileEvidence(error = "해석 실패: ${shortError(error)}")
     } finally {
       profileFile.delete()
+    }
+  }
+
+  private fun inspectQnnProfile(profileFile: File): QnnProfileEvidence {
+    val qnnLog = File(profileFile.parentFile, "${profileFile.nameWithoutExtension}_qnn.log")
+    return try {
+      if (!profileFile.isFile) {
+        QnnProfileEvidence(error = "파일 없음")
+      } else {
+        val executeEvents = profileFile.useLines { lines ->
+          lines.count { it.contains("execute", ignoreCase = true) }
+        }
+        QnnProfileEvidence(
+          executeEventCount = executeEvents,
+          error = if (executeEvents == 0) "실행 이벤트 없음" else null,
+        )
+      }
+    } catch (error: Exception) {
+      Log.w(TAG, "QNN HTP profile parse failed: ${diagnosticError(error)}")
+      QnnProfileEvidence(error = "해석 실패: ${shortError(error)}")
+    } finally {
+      profileFile.delete()
+      qnnLog.delete()
     }
   }
 
@@ -442,9 +527,21 @@ class YoloDetector(
     val error: Throwable? = null,
   )
 
+  private data class OrtProfileEvidence(
+    val qnnNodeCount: Int = 0,
+    val cpuNodeCount: Int = 0,
+    val error: String? = null,
+  )
+
+  private data class QnnProfileEvidence(
+    val executeEventCount: Int = 0,
+    val error: String? = null,
+  )
+
   companion object {
     private const val TAG = "CarrotExternalAI"
     private const val QNN_EP_NAME = "QNNExecutionProvider"
+    private const val CPU_EP_NAME = "CPUExecutionProvider"
     private const val QNN_PLUGIN_LIBRARY = "libonnxruntime_providers_qnn.so"
     private const val QNN_STACK_LABEL = "ORT 1.26.0 · QNN EP 2.4.0 · QAIRT 2.48.0"
     private val QNN_REGISTRATION_LOCK = Any()

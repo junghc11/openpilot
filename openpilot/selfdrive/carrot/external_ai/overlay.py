@@ -12,18 +12,18 @@ BACKEND_DISPLAY_NAMES = {
   "onnxruntime-cpu": "CPU",
   "onnxruntime-qnn": "QNN",
   "onnxruntime-qnn-mixed": "QNN+CPU",
-  "onnxruntime-qnn-mixed-unverified": "QNN?",
+  "onnxruntime-qnn-mixed-unverified": "QNN(검증 보류)",
   "qnn": "QNN",
 }
 
 NPU_BADGE_BACKENDS = frozenset((
   "onnxruntime-qnn",
+  "onnxruntime-qnn-mixed",
+  "onnxruntime-qnn-mixed-unverified",
+  "onnxruntime-nnapi",
   "qnn",
   "qnn-htp",
 ))
-MIXED_NPU_BADGE_BACKENDS = frozenset(("onnxruntime-qnn-mixed",))
-UNVERIFIED_QNN_BADGE_BACKENDS = frozenset(("onnxruntime-qnn-mixed-unverified",))
-GENERIC_ACCEL_BADGE_BACKENDS = frozenset(("onnxruntime-nnapi",))
 CPU_BADGE_BACKENDS = frozenset((
   "onnxruntime-cpu",
   "onnxruntime-cpu-fallback",
@@ -121,12 +121,6 @@ def phone_ai_compute_badge(state: Any) -> str:
   backend = str(_field(state, "backend", "") or "").strip().lower()
   if backend in NPU_BADGE_BACKENDS or backend.startswith("qnn-"):
     return "eNPU"
-  if backend in MIXED_NPU_BADGE_BACKENDS:
-    return "eNPU+CPU"
-  if backend in UNVERIFIED_QNN_BADGE_BACKENDS:
-    return "eQNN?"
-  if backend in GENERIC_ACCEL_BADGE_BACKENDS:
-    return "eACCEL"
   if backend in CPU_BADGE_BACKENDS or backend.startswith("onnxruntime-cpu-"):
     return "eCPU"
   return ""

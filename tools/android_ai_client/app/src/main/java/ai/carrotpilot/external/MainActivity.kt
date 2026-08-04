@@ -449,10 +449,10 @@ class MainActivity : Activity() {
       } else {
         "NNAPI → CPU · QNN/HTP 런타임 미포함"
       }, 14f, if (BuildConfig.QNN_EP_INCLUDED) COLOR_GREEN else COLOR_MUTED).apply { setPadding(0, dp(7), 0, 0) })
-      addView(label("eNPU는 CPU 폴백을 금지한 QNN/HTP 전체 그래프 예열까지 성공했을 때만 표시됩니다.", 12f, COLOR_MUTED).apply {
+      addView(label("QNN/HTP 또는 CPU를 제외한 NNAPI 가속 세션이 동작하면 배지는 eNPU로 통일됩니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(8), 0, 0)
       })
-      addView(label("eNPU+CPU는 ORT 프로파일에서 QNN 노드 실행이 확인된 혼합 경로입니다. eQNN?은 QNN 세션만 열렸고 실제 노드 배치는 확인하지 못한 상태입니다.", 12f, COLOR_MUTED).apply {
+      addView(label("전체 QNN, QNN+CPU 혼합, QNN 검증 보류, NNAPI 구분은 가속 진단 상세 문구에 계속 표시됩니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(6), 0, 0)
       })
       addView(label("C3X가 없어도 세션 시작 즉시 더미 입력으로 사전 점검하며, SoC와 실패 원문을 가속 진단에 유지합니다.", 12f, COLOR_MUTED).apply {
@@ -859,9 +859,6 @@ class MainActivity : Activity() {
     backendBadge.text = badge
     backendBadge.background = roundedBackground(when (badge) {
       "eNPU" -> COLOR_GREEN
-      "eNPU+CPU" -> COLOR_GREEN
-      "eQNN?" -> COLOR_ORANGE_DARK
-      "eACCEL" -> COLOR_ORANGE_DARK
       "eCPU" -> COLOR_PURPLE
       else -> COLOR_BADGE_IDLE
     }, 18f)

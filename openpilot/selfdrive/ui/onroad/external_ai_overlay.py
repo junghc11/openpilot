@@ -134,16 +134,13 @@ class ExternalAIOverlayRenderer:
 
   def _draw_compute_badge(self, rect: rl.Rectangle, text: str, *, below_status: bool) -> None:
     del below_status
-    width = 168.0 if text == "eNPU+CPU" else 112.0
+    width = 112.0
     height = 42.0
     x = rect.x + 14.0
     y = rect.y + rect.height - height - 14.0
     badge = rl.Rectangle(x, y, width, height)
     fill = {
       "eNPU": rl.GREEN,
-      "eNPU+CPU": rl.ORANGE,
-      "eQNN?": rl.YELLOW,
-      "eACCEL": rl.ORANGE,
     }.get(text, rl.Color(0, 122, 255, 230))
     rl.draw_rectangle_rounded(badge, 0.25, 8, fill)
     rl.draw_rectangle_rounded_lines_ex(badge, 0.25, 8, 2.0, rl.WHITE)
@@ -151,8 +148,8 @@ class ExternalAIOverlayRenderer:
       text,
       x + width * 0.5,
       y + height - 10.0,
-      23 if text == "eNPU+CPU" else 27,
-      rl.BLACK if text == "eQNN?" else rl.WHITE,
+      27,
+      rl.WHITE,
       font=self._font_display,
       border_width=2.0,
       shadow_offset=4.0,

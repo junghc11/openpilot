@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.12.0"' in gradle
+  assert 'versionName = "0.12.2"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -87,15 +87,19 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'setSymbolicDimensionValue("height", dynamicInputSize.toLong())' in qnn_setup
   assert 'setSymbolicDimensionValue("width", dynamicInputSize.toLong())' in qnn_setup
   assert 'registerExecutionProviderLibrary(QNN_EP_NAME, QNN_PLUGIN_LIBRARY)' in qnn_setup
-  assert 'addExecutionProvider(qnnDevices, mapOf(' in qnn_setup
+  assert 'options.addExecutionProvider(qnnDevices, providerOptions)' in qnn_setup
   assert '"backend_path" to "libQnnHtp.so"' in qnn_setup
   assert '"htp_performance_mode" to "sustained_high_performance"' in qnn_setup
   assert '"htp_graph_finalization_optimization_mode" to "3"' in qnn_setup
   assert '"offload_graph_io_quantization" to "0"' in qnn_setup
-  assert 'requireFullGraph -> "onnxruntime-qnn"' in qnn_setup
+  assert 'backend = "onnxruntime-qnn"' in qnn_setup
   assert '"onnxruntime-qnn-mixed"' in qnn_setup
   assert '"onnxruntime-qnn-mixed-unverified"' in qnn_setup
-  assert 'finishProfilingAndFindQnn(session)' in qnn_setup
+  assert 'providerOptions["profiling_level"] = "basic"' in qnn_setup
+  assert 'providerOptions["profiling_file_path"] = qnnProfilePath' in qnn_setup
+  assert 'finishProfilingAndInspect' in qnn_setup
+  assert 'inspectQnnProfile' in qnn_setup
+  assert 'HTP 실행 ${qnnEvidence.executeEventCount}건' in qnn_setup
   assert "createAndWarmSession(modelFile, qnnOptions)" in qnn_setup
   assert "candidate.run(mapOf(candidateInputName to input))" in detector
   assert detector.index("tryCreateQnnSession(") < detector.index("nnapiOptions.addNnapi")
@@ -188,10 +192,17 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   assert "android:windowLightStatusBar\">true" in style
   assert "ACTION_ANALYSIS" in activity and "ACTION_METRICS" in activity
   assert "ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L" in service
-  assert '"onnxruntime-qnn" -> "eNPU"' in service
-  assert '"onnxruntime-qnn-mixed" -> "eNPU+CPU"' in service
-  assert '"onnxruntime-qnn-mixed-unverified" -> "eQNN?"' in service
-  assert '"onnxruntime-nnapi" -> "eACCEL"' in service
+  for backend in (
+    '"onnxruntime-qnn"',
+    '"onnxruntime-qnn-mixed"',
+    '"onnxruntime-qnn-mixed-unverified"',
+    '"onnxruntime-nnapi"',
+  ):
+    assert backend in service
+  assert '"onnxruntime-nnapi" -> "eNPU"' in service
+  assert 'eQNN?' not in service
+  assert 'eNPU+CPU' not in service
+  assert 'eACCEL' not in service
   assert 'else -> "eCPU"' in service
   for field in ("EXTRA_VIDEO_FPS", "EXTRA_AI_FPS", "EXTRA_FOLLOW_RATE", "EXTRA_SKIPPED_FPS"):
     assert field in service and field in activity
