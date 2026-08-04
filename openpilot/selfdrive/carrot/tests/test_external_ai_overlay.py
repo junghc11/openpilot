@@ -134,18 +134,26 @@ def test_c3x_overlay_status_reports_connection_backend_and_latency() -> None:
   assert is_connected
 
   analyzing, analyzing_connected = phone_ai_status_text(
-    SimpleNamespace(valid=False, connected=True),
+    SimpleNamespace(valid=False, connected=True, lastError=""),
     service_alive=True,
     service_valid=True,
   )
   assert analyzing == "외부 AI · 연결됨 · 분석 대기"
   assert analyzing_connected
 
+  delayed, delayed_connected = phone_ai_status_text(
+    SimpleNamespace(valid=False, connected=True, lastError="result exceeded maximum latency"),
+    service_alive=True,
+    service_valid=True,
+  )
+  assert delayed == "외부 AI · 연결됨 · 결과 지연 초과"
+  assert delayed_connected
+
 
 @pytest.mark.parametrize("backend", (
   "onnxruntime-qnn",
   "onnxruntime-qnn-mixed",
-  "onnxruntime-qnn-mixed-unverified",
+  "onnxruntime-qnn-mixed-benchmarked",
   "onnxruntime-nnapi",
   "qnn",
   "qnn-htp",
@@ -159,6 +167,11 @@ def test_c3x_enpu_badge_is_active_for_external_accelerators(backend: str) -> Non
 def test_c3x_ecpu_badge_is_active_for_cpu_backends(backend: str) -> None:
   state = SimpleNamespace(valid=True, connected=True, backend=backend)
   assert phone_ai_compute_badge(state) == "eCPU"
+
+
+def test_c3x_does_not_claim_npu_for_unverified_qnn_session() -> None:
+  state = SimpleNamespace(valid=True, connected=True, backend="onnxruntime-qnn-mixed-unverified")
+  assert phone_ai_compute_badge(state) == ""
 
 
 @pytest.mark.parametrize("state", (

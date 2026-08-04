@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.15.1"' in gradle
+  assert 'versionName = "0.15.2"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -80,7 +80,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
   assert "jniLibs.useLegacyPackaging = true" in gradle
   assert "BuildConfig.QNN_EP_INCLUDED" in activity
-  assert "QNN/HTP 전체 그래프 · 검증된 QNN+CPU · NNAPI · CPU를 동일 입력으로 비교" in activity
+  assert "QNN/HTP 전체 그래프 · QNN+CPU 혼합 · NNAPI · CPU를 동일 입력으로 실측 비교" in activity
   assert "p95가 CPU보다 10% 이상 빠르고 p50도 느리지 않은 가속기만 자동 선택" in activity
 
   qnn_setup = detector.split("private fun tryCreateQnnSession", 1)[1].split("private fun createBaseOptions", 1)[0]
@@ -118,7 +118,8 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert "accelerator.p50Ms <= cpu.p50Ms" in selector
   assert "BENCHMARK_WARMUP_RUNS = 2" in detector
   assert "BENCHMARK_RUNS = 7" in detector
-  assert "QNN 혼합 실행 제외: HTP 실행 증거 없음" in detector
+  assert "QNN 혼합 프로파일 증거 없음: CPU 대비 실측 벤치마크로 확인" in detector
+  assert 'backend = "onnxruntime-qnn-mixed-benchmarked"' in detector
   assert "사전 벤치마크 p50/p95" in detector
 
 
@@ -220,10 +221,11 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   for backend in (
     '"onnxruntime-qnn"',
     '"onnxruntime-qnn-mixed"',
-    '"onnxruntime-qnn-mixed-unverified"',
+    '"onnxruntime-qnn-mixed-benchmarked"',
     '"onnxruntime-nnapi"',
   ):
     assert backend in service
+  assert '"onnxruntime-qnn-mixed-unverified"' not in service.split("private fun acceleratorBadge", 1)[1].split("private fun publishAnalysisLog", 1)[0]
   assert '"onnxruntime-nnapi" -> "eNPU"' in service
   assert 'eQNN?' not in service
   assert 'eNPU+CPU' not in service

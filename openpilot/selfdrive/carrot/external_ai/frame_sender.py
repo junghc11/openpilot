@@ -17,8 +17,11 @@ DEFAULT_FRAME_FPS = 5
 DEFAULT_JPEG_QUALITY = 75
 OUTPUT_WIDTH = 640
 OUTPUT_HEIGHT = 360
-H264_SOURCE = "youtubeRoadEncodeData"
-H264_FALLBACK_SOURCE = "qRoadEncodeData"
+# qRoadEncodeData is produced by the normal on-road encoder and is therefore the
+# most predictable H.264 source on C3/C3X/C4. YouTube/external_ai_encoderd remains
+# a fallback, but it must not prevent the phone from using the always-on qRoad feed.
+H264_SOURCE = "qRoadEncodeData"
+H264_FALLBACK_SOURCE = "youtubeRoadEncodeData"
 H264_FALLBACK_TIMEOUT_S = 3.0
 H264_SOURCE_STALE_TIMEOUT_S = 1.0
 H264_QUEUE_MAX_FRAMES = 60

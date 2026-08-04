@@ -77,24 +77,16 @@ class PhoneAIDaemon:
     frame_fps = _clamped_param_int(self.params, "ExternalAIFrameFPS", DEFAULT_FRAME_FPS, 1, 15)
     jpeg_quality = _clamped_param_int(self.params, "ExternalAIJpegQuality", DEFAULT_JPEG_QUALITY, 30, 95)
     self.transport = _clamped_param_int(self.params, "ExternalAITransport", DEFAULT_TRANSPORT, TRANSPORT_JPEG, TRANSPORT_H264)
-    youtube_live = _clamped_param_int(self.params, "CarrotYouTubeLive", 0, 0, 1)
-    youtube_quality = _clamped_param_int(self.params, "CarrotYouTubeQuality", 0, 0, 3)
     use_h264 = self.transport == TRANSPORT_H264
     queue = AdaptiveFrameQueue() if use_h264 else None
     self.frame_server = VideoFrameTcpServer(port=frame_port, allowed_phone_ip=allowed_phone_ip, slot=queue)
-    # The low YouTube/dedicated External AI stream is road-camera 854x480. For
-    # higher/wide YouTube profiles, use the always-on road qcamera stream so the
-    # phone is not forced to decode 720p/1080p or a projection-mismatched wide feed.
-    primary_h264_source = (
-      H264_SOURCE
-      if youtube_live == 0 or youtube_quality == 0
-      else H264_FALLBACK_SOURCE
-    )
+    # Prefer the always-on qRoad stream. The dedicated/YouTube stream remains a
+    # secondary source and can be selected only at an IDR if qRoad becomes stale.
     self.h264_capture = (
       H264FrameCapture(
         self.frame_server,
         messaging_module,
-        source=primary_h264_source,
+        source=H264_SOURCE,
         fallback_source=H264_FALLBACK_SOURCE,
       )
       if use_h264 else None

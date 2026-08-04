@@ -12,6 +12,7 @@ BACKEND_DISPLAY_NAMES = {
   "onnxruntime-cpu": "CPU",
   "onnxruntime-qnn": "QNN",
   "onnxruntime-qnn-mixed": "QNN+CPU",
+  "onnxruntime-qnn-mixed-benchmarked": "QNN+CPU",
   "onnxruntime-qnn-mixed-unverified": "QNN(검증 보류)",
   "qnn": "QNN",
 }
@@ -19,7 +20,7 @@ BACKEND_DISPLAY_NAMES = {
 NPU_BADGE_BACKENDS = frozenset((
   "onnxruntime-qnn",
   "onnxruntime-qnn-mixed",
-  "onnxruntime-qnn-mixed-unverified",
+  "onnxruntime-qnn-mixed-benchmarked",
   "onnxruntime-nnapi",
   "qnn",
   "qnn-htp",
@@ -161,6 +162,13 @@ def phone_ai_status_text(
   if not bool(_field(state, "connected", False)):
     return "외부 AI · 스마트폰 연결 대기", False
   if not bool(_field(state, "valid", False)):
+    last_error = str(_field(state, "lastError", "") or "").strip().lower()
+    if "maximum latency" in last_error:
+      return "외부 AI · 연결됨 · 결과 지연 초과", True
+    if "unexpected sender" in last_error:
+      return "외부 AI · 연결됨 · 스마트폰 IP 불일치", True
+    if last_error:
+      return "외부 AI · 연결됨 · 결과 수신 오류", True
     return "외부 AI · 연결됨 · 분석 대기", True
 
   backend_value = str(_field(state, "backend", "") or "").strip().lower()

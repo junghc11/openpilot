@@ -339,12 +339,14 @@ class YoloDetector(
       null
     }
     mixedQnnAttempt?.setup?.let { setup ->
+      // Some Qualcomm stacks create and run the HTP-backed mixed session but do not
+      // expose provider nodes through the ORT/QNN profiling files. Keep that session
+      // as a benchmark candidate: it is promoted to eNPU only when it measurably
+      // outperforms the same model on the plain ORT CPU session.
       if (setup.backend == "onnxruntime-qnn-mixed-unverified") {
-        diagnostics += "QNN 혼합 실행 제외: HTP 실행 증거 없음"
-        setup.close()
-      } else {
-        candidates += setup
+        diagnostics += "QNN 혼합 프로파일 증거 없음: CPU 대비 실측 벤치마크로 확인"
       }
+      candidates += setup
     }
     mixedQnnAttempt?.error?.let { error ->
       lastError = error
@@ -637,10 +639,22 @@ class YoloDetector(
     } else {
       "${backendShortName(selected.setup.backend)} 자동 선택"
     }
+    val selectedSetup = if (
+      selected.setup.backend == "onnxruntime-qnn-mixed-unverified" &&
+      cpu != null &&
+      BackendAutoSelector.shouldUseAccelerator(selected.timing, cpu.timing)
+    ) {
+      selected.setup.copy(
+        backend = "onnxruntime-qnn-mixed-benchmarked",
+        backendLabel = "${selected.setup.backendLabel} · CPU 대비 실측 가속 확인",
+      )
+    } else {
+      selected.setup
+    }
     val diagnosticSummary = diagnostics.take(3).joinToString(" · ")
-    return selected.setup.copy(
+    return selectedSetup.copy(
       backendLabel = listOf(
-        selected.setup.backendLabel,
+        selectedSetup.backendLabel,
         "사전 벤치마크 p50/p95 $timingSummary",
         decision,
         diagnosticSummary,
@@ -683,6 +697,8 @@ class YoloDetector(
   private fun backendShortName(backend: String): String = when (backend) {
     "onnxruntime-qnn" -> "QNN"
     "onnxruntime-qnn-mixed" -> "QNN+CPU"
+    "onnxruntime-qnn-mixed-benchmarked" -> "QNN+CPU(실측)"
+    "onnxruntime-qnn-mixed-unverified" -> "QNN+CPU(검증 중)"
     "onnxruntime-nnapi" -> "NNAPI"
     "onnxruntime-cpu-fallback" -> "CPU"
     else -> backend

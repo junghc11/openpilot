@@ -499,7 +499,7 @@ class ExternalAIService : Service() {
   private fun acceleratorBadge(backend: String): String = when (backend) {
     "onnxruntime-qnn",
     "onnxruntime-qnn-mixed",
-    "onnxruntime-qnn-mixed-unverified",
+    "onnxruntime-qnn-mixed-benchmarked",
     "onnxruntime-nnapi" -> "eNPU"
     else -> "eCPU"
   }

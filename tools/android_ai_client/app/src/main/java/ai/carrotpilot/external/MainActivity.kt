@@ -507,7 +507,7 @@ class MainActivity : Activity() {
     addView(card().apply {
       addView(sectionTitle("가속 자동 선택"))
       addView(label(if (BuildConfig.QNN_EP_INCLUDED) {
-        "QNN/HTP 전체 그래프 · 검증된 QNN+CPU · NNAPI · CPU를 동일 입력으로 비교"
+        "QNN/HTP 전체 그래프 · QNN+CPU 혼합 · NNAPI · CPU를 동일 입력으로 실측 비교"
       } else {
         "NNAPI와 CPU를 동일 입력으로 비교 · QNN/HTP 런타임 미포함"
       }, 14f, if (BuildConfig.QNN_EP_INCLUDED) COLOR_GREEN else COLOR_MUTED).apply { setPadding(0, dp(7), 0, 0) })
