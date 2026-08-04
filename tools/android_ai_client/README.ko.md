@@ -50,7 +50,7 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 UI만 Android x86_64 에뮬레이터에서 확인할 때는 `-PcarrotQnnEnabled=false -PcarrotTargetAbi=x86_64`를 함께 지정합니다. 실제 배포 APK는 옵션 없이 빌드하여 기본 `arm64-v8a`와 QNN Runtime을 유지합니다.
 
-기본 빌드는 [Maven Central의 ONNX Runtime QNN](https://central.sonatype.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn/1.24.3)과 전이 의존성인 Qualcomm QNN Runtime을 APK에 포함합니다. Qualcomm 이외 기기에서도 QNN 세션 실패를 처리하고 NNAPI·CPU로 실행할 수 있습니다. QNN 네이티브 라이브러리를 APK 안에서는 압축하고 설치 시 꺼내므로 현재 debug APK는 약 79MB지만 설치 공간은 200MB 이상 필요할 수 있습니다. 백엔드와 모델 요구사항은 [ONNX Runtime QNN 안내](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)를 따릅니다. APK 크기를 줄인 NNAPI·CPU 전용 시험 빌드는 다음처럼 만듭니다.
+기본 빌드는 ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), QNN Runtime 2.48.0을 APK에 포함합니다. 먼저 `session.disable_cpu_ep_fallback=1`로 전체 HTP 그래프를 검사하고, 실패하면 QNN+CPU 혼합 세션을 열어 ORT 프로파일에서 실제 QNN 노드 실행을 확인합니다. 앱의 가속 진단에는 SoC와 전체 그래프·혼합 실행 실패 원문이 C3X 검색 상태와 별도로 유지됩니다. QNN 네이티브 라이브러리를 APK 안에서는 압축하고 설치 시 꺼내므로 설치 공간은 APK보다 더 많이 필요할 수 있습니다. APK 크기를 줄인 NNAPI·CPU 전용 시험 빌드는 다음처럼 만듭니다.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false

@@ -134,10 +134,20 @@ def test_c3x_overlay_status_reports_connection_backend_and_latency() -> None:
   assert is_connected
 
 
-@pytest.mark.parametrize("backend", ("onnxruntime-nnapi", "onnxruntime-qnn", "qnn", "qnn-htp"))
+@pytest.mark.parametrize("backend", ("onnxruntime-qnn", "qnn", "qnn-htp"))
 def test_c3x_enpu_badge_is_active_for_external_accelerators(backend: str) -> None:
   state = SimpleNamespace(valid=True, connected=True, backend=backend)
   assert phone_ai_compute_badge(state) == "eNPU"
+
+
+@pytest.mark.parametrize("backend, badge", (
+  ("onnxruntime-qnn-mixed", "eNPU+CPU"),
+  ("onnxruntime-qnn-mixed-unverified", "eQNN?"),
+  ("onnxruntime-nnapi", "eACCEL"),
+))
+def test_c3x_distinguishes_mixed_and_unverified_accelerators(backend: str, badge: str) -> None:
+  state = SimpleNamespace(valid=True, connected=True, backend=backend)
+  assert phone_ai_compute_badge(state) == badge
 
 
 @pytest.mark.parametrize("backend", ("onnxruntime-cpu", "onnxruntime-cpu-fallback", "cpu", "cpu-fallback"))

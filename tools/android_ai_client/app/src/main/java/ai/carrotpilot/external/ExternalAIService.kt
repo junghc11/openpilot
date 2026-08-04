@@ -98,17 +98,20 @@ class ExternalAIService : Service() {
         receiveFps = 0.0,
         inferenceFps = 0.0,
         backend = detector.backend,
+        backendLabel = detector.backendLabel,
       )
+      val preflightSummary = "기기 ${deviceSummary()}\n${detector.backendLabel}"
       updateStatus(
         "가속 사전 점검 완료: ${acceleratorBadge(detector.backend)}\n" +
-          "${detector.backendLabel}\nC3X 연결 없이 더미 입력 예열로 확인",
+          "$preflightSummary\nC3X 연결 없이 더미 입력 예열로 확인",
       )
       val preflightBadge = acceleratorBadge(detector.backend)
       while (token.get()) {
         val targetHost = if (config.autoDiscover) {
           updateStatus(
             "같은 사설망에서 CarrotPilot 기기 검색 중\n" +
-              "가속 사전 점검 $preflightBadge · TCP ${config.framePort} / CAI1·CAI2 확인",
+              "가속 사전 점검 $preflightBadge · TCP ${config.framePort} / CAI1·CAI2 확인\n" +
+              preflightSummary,
           )
           DeviceDiscovery.findHost(config.framePort, config.host) { token.get() }
         } else {
@@ -116,7 +119,10 @@ class ExternalAIService : Service() {
         }
         if (targetHost == null) {
           if (token.get()) {
-            updateStatus("기기를 찾지 못함 · 가속 $preflightBadge\n${discoveryRetryDelayMs / 1_000}초 후 같은 망 다시 검색")
+            updateStatus(
+              "기기를 찾지 못함 · 가속 $preflightBadge\n" +
+                "$preflightSummary\n${discoveryRetryDelayMs / 1_000}초 후 같은 망 다시 검색",
+            )
             SystemClock.sleep(discoveryRetryDelayMs)
             discoveryRetryDelayMs = (discoveryRetryDelayMs * 2).coerceAtMost(MAX_DISCOVERY_RETRY_DELAY_MS)
           }
@@ -292,6 +298,7 @@ class ExternalAIService : Service() {
               receiveFps = receiveFps,
               inferenceFps = inferenceFps,
               backend = detector.backend,
+              backendLabel = detector.backendLabel,
             )
             receivedCount = 0
             inferenceCount = 0
@@ -387,6 +394,8 @@ class ExternalAIService : Service() {
 
   private fun acceleratorBadge(backend: String): String = when (backend) {
     "onnxruntime-qnn" -> "eNPU"
+    "onnxruntime-qnn-mixed" -> "eNPU+CPU"
+    "onnxruntime-qnn-mixed-unverified" -> "eQNN?"
     "onnxruntime-nnapi" -> "eACCEL"
     else -> "eCPU"
   }
@@ -395,7 +404,13 @@ class ExternalAIService : Service() {
     sendBroadcast(Intent(ACTION_ANALYSIS).setPackage(packageName).putExtra(EXTRA_ANALYSIS_LOG, message))
   }
 
-  private fun publishMetrics(modelDisplayName: String, receiveFps: Double, inferenceFps: Double, backend: String) {
+  private fun publishMetrics(
+    modelDisplayName: String,
+    receiveFps: Double,
+    inferenceFps: Double,
+    backend: String,
+    backendLabel: String,
+  ) {
     val followRate = if (receiveFps > 0.0) (inferenceFps / receiveFps * 100.0).coerceIn(0.0, 100.0) else 0.0
     val skippedFps = (receiveFps - inferenceFps).coerceAtLeast(0.0)
     sendBroadcast(Intent(ACTION_METRICS).setPackage(packageName).apply {
@@ -405,6 +420,7 @@ class ExternalAIService : Service() {
       putExtra(EXTRA_FOLLOW_RATE, followRate)
       putExtra(EXTRA_SKIPPED_FPS, skippedFps)
       putExtra(EXTRA_ACCELERATOR_BADGE, acceleratorBadge(backend))
+      putExtra(EXTRA_ACCELERATOR_DETAIL, "기기 ${deviceSummary()}\n$backendLabel")
     })
   }
 
@@ -548,6 +564,7 @@ class ExternalAIService : Service() {
     const val EXTRA_FOLLOW_RATE = "follow_rate"
     const val EXTRA_SKIPPED_FPS = "skipped_fps"
     const val EXTRA_ACCELERATOR_BADGE = "accelerator_badge"
+    const val EXTRA_ACCELERATOR_DETAIL = "accelerator_detail"
     @Volatile var serviceActive = false
       private set
     @Volatile var clientConnected = false

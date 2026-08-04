@@ -50,7 +50,7 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 For UI-only validation on an Android x86_64 emulator, add `-PcarrotQnnEnabled=false -PcarrotTargetAbi=x86_64`. Build the real deployment APK without those properties so the default `arm64-v8a` ABI and QNN Runtime remain enabled.
 
-The default build pulls [ONNX Runtime QNN from Maven Central](https://central.sonatype.com/artifact/com.microsoft.onnxruntime/onnxruntime-android-qnn/1.24.3) and its transitive Qualcomm QNN Runtime dependency. It still handles QNN session failure and runs through NNAPI or CPU on non-Qualcomm devices. Native QNN libraries are compressed in the APK and extracted at install time, so the current debug APK is about 79 MB but can require more than 200 MB of installed storage. Backend and model requirements follow the [ONNX Runtime QNN guide](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html). Build a smaller NNAPI/CPU-only test APK with:
+The default build packages ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), and QNN Runtime 2.48.0. It first verifies a full HTP graph with `session.disable_cpu_ep_fallback=1`; if that fails, it opens a mixed QNN+CPU session and uses the ORT profile to confirm actual QNN node execution. The acceleration diagnostics retain the SoC and the full-graph/mixed failure text independently of C3X discovery status. Native QNN libraries are compressed in the APK and extracted at install time, so installed storage can be substantially larger than the APK. Build a smaller NNAPI/CPU-only test APK with:
 
 ```powershell
 .\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false

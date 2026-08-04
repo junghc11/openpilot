@@ -71,27 +71,34 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.11.0"' in gradle
+  assert 'versionName = "0.12.0"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
-  assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")' in gradle
+  assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
+  assert 'runtimeOnly("com.qualcomm.qti:onnxruntime-android-qnn:2.4.0")' in gradle
+  assert 'runtimeOnly("com.qualcomm.qti:qnn-runtime:2.48.0")' in gradle
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
   assert "jniLibs.useLegacyPackaging = true" in gradle
   assert "BuildConfig.QNN_EP_INCLUDED" in activity
-  assert "Qualcomm QNN/HTP 전체 그래프 → NNAPI → CPU" in activity
+  assert "Qualcomm QNN/HTP 전체 그래프 → QNN+CPU 혼합 → NNAPI → CPU" in activity
 
   qnn_setup = detector.split("private fun tryCreateQnnSession", 1)[1].split("private fun createBaseOptions", 1)[0]
   assert 'addConfigEntry("session.disable_cpu_ep_fallback", "1")' in qnn_setup
   assert 'setSymbolicDimensionValue("height", dynamicInputSize.toLong())' in qnn_setup
   assert 'setSymbolicDimensionValue("width", dynamicInputSize.toLong())' in qnn_setup
+  assert 'registerExecutionProviderLibrary(QNN_EP_NAME, QNN_PLUGIN_LIBRARY)' in qnn_setup
+  assert 'addExecutionProvider(qnnDevices, mapOf(' in qnn_setup
   assert '"backend_path" to "libQnnHtp.so"' in qnn_setup
   assert '"htp_performance_mode" to "sustained_high_performance"' in qnn_setup
   assert '"htp_graph_finalization_optimization_mode" to "3"' in qnn_setup
   assert '"offload_graph_io_quantization" to "0"' in qnn_setup
-  assert 'backend = "onnxruntime-qnn"' in qnn_setup
+  assert 'requireFullGraph -> "onnxruntime-qnn"' in qnn_setup
+  assert '"onnxruntime-qnn-mixed"' in qnn_setup
+  assert '"onnxruntime-qnn-mixed-unverified"' in qnn_setup
+  assert 'finishProfilingAndFindQnn(session)' in qnn_setup
   assert "createAndWarmSession(modelFile, qnnOptions)" in qnn_setup
   assert "candidate.run(mapOf(candidateInputName to input))" in detector
-  assert detector.index("tryCreateQnnSession(modelFile)") < detector.index("nnapiOptions.addNnapi")
+  assert detector.index("tryCreateQnnSession(") < detector.index("nnapiOptions.addNnapi")
   assert 'input.shape[2] in longArrayOf(-1, 320, 416, 640)' in detector
   service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
   preflight = service.split("private fun runClient", 1)[1].split("while (token.get())", 1)[0]
@@ -99,6 +106,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert "YoloDetector(" in preflight
   assert "publishMetrics(" in preflight
   assert "C3X 연결 없이 더미 입력 예열로 확인" in preflight
+  assert "preflightSummary" in service
 
 
 def test_android_qnn_models_are_static_pinned_and_default() -> None:
@@ -181,10 +189,13 @@ def test_android_client_shows_live_model_fps_console_and_verified_npu_badge() ->
   assert "ACTION_ANALYSIS" in activity and "ACTION_METRICS" in activity
   assert "ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L" in service
   assert '"onnxruntime-qnn" -> "eNPU"' in service
+  assert '"onnxruntime-qnn-mixed" -> "eNPU+CPU"' in service
+  assert '"onnxruntime-qnn-mixed-unverified" -> "eQNN?"' in service
   assert '"onnxruntime-nnapi" -> "eACCEL"' in service
   assert 'else -> "eCPU"' in service
   for field in ("EXTRA_VIDEO_FPS", "EXTRA_AI_FPS", "EXTRA_FOLLOW_RATE", "EXTRA_SKIPPED_FPS"):
     assert field in service and field in activity
+  assert "EXTRA_ACCELERATOR_DETAIL" in service and "acceleratorDetail" in activity
   assert "sourceWindowFirstTimestampNs" in service
   assert "sourceWindowLastTimestampNs" in service
   assert "(receivedCount - 1) / sourceSeconds" in service

@@ -5,8 +5,10 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
+import android.util.Log
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OnnxJavaType
+import ai.onnxruntime.OrtEpDevice
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
@@ -19,6 +21,7 @@ import java.nio.FloatBuffer
 import java.util.EnumSet
 import kotlin.math.max
 import kotlin.math.min
+import org.json.JSONArray
 
 data class DetectionResult(
   val detections: List<Detection>,
@@ -200,13 +203,29 @@ class YoloDetector(
   }
 
   private fun createPreferredSession(modelFile: File): SessionSetup {
-    val qnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) tryCreateQnnSession(modelFile) else null
-    qnnAttempt?.setup?.let { return it }
+    val strictQnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) {
+      tryCreateQnnSession(modelFile, requireFullGraph = true)
+    } else {
+      null
+    }
+    strictQnnAttempt?.setup?.let { return it }
+    val mixedQnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) {
+      tryCreateQnnSession(
+        modelFile,
+        requireFullGraph = false,
+        strictFailure = strictQnnAttempt?.error,
+      )
+    } else {
+      null
+    }
+    mixedQnnAttempt?.setup?.let { return it }
     val qnnFallback = when {
       !tryQnn -> qnnSkipReason.ifBlank { "QNN 건너뜀: CPU 호환 모델" }
       !BuildConfig.QNN_EP_INCLUDED -> "QNN EP 미포함 빌드"
-      qnnAttempt?.error != null -> qnnErrorLabel(qnnAttempt.error)
-      else -> ""
+      else -> listOfNotNull(
+        strictQnnAttempt?.error?.let { qnnErrorLabel("전체 그래프", it) },
+        mixedQnnAttempt?.error?.let { qnnErrorLabel("혼합 실행", it) },
+      ).joinToString("\n")
     }
 
     val nnapiOptions = createBaseOptions()
@@ -242,44 +261,110 @@ class YoloDetector(
       } catch (cpuError: Exception) {
         cpuOptions.close()
         cpuError.addSuppressed(nnapiError)
-        qnnAttempt?.error?.let(cpuError::addSuppressed)
+        strictQnnAttempt?.error?.let(cpuError::addSuppressed)
+        mixedQnnAttempt?.error?.let(cpuError::addSuppressed)
         throw cpuError
       }
     }
   }
 
-  private fun tryCreateQnnSession(modelFile: File): QnnAttempt {
+  private fun tryCreateQnnSession(
+    modelFile: File,
+    requireFullGraph: Boolean,
+    strictFailure: Throwable? = null,
+  ): QnnAttempt {
     val qnnOptions = createBaseOptions()
     return try {
-      // A QNN session is accepted only when every operator can stay on HTP. This makes the
-      // eNPU badge an actual full-graph QNN result rather than an unnoticed CPU partition.
-      qnnOptions.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+      val qnnDevices = qnnEpDevices()
+      if (requireFullGraph) {
+        // Keep eNPU strict: every operator must stay on HTP and the warm-up must complete.
+        qnnOptions.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+      } else {
+        // A mixed retry can still accelerate supported subgraphs instead of discarding QNN
+        // completely because one YOLO output operator requires the CPU EP.
+        qnnOptions.enableProfiling(
+          File(modelFile.parentFile, "ort-qnn-mixed-${SystemClock.elapsedRealtimeNanos()}").absolutePath,
+        )
+      }
       // Ultralytics names its dynamic axes batch/height/width. QNN requires concrete shapes,
       // so bind the downloaded dynamic model to the input size selected in the app.
       qnnOptions.setSymbolicDimensionValue("batch", 1L)
       qnnOptions.setSymbolicDimensionValue("height", dynamicInputSize.toLong())
       qnnOptions.setSymbolicDimensionValue("width", dynamicInputSize.toLong())
-      qnnOptions.addQnn(mapOf(
+      qnnOptions.addExecutionProvider(qnnDevices, mapOf(
         "backend_path" to "libQnnHtp.so",
         "htp_performance_mode" to "sustained_high_performance",
         "htp_graph_finalization_optimization_mode" to "3",
         "enable_htp_fp16_precision" to "1",
         "offload_graph_io_quantization" to "0",
       ))
+      val session = createAndWarmSession(modelFile, qnnOptions)
+      val qnnProfileObserved = if (requireFullGraph) {
+        true
+      } else {
+        finishProfilingAndFindQnn(session)
+      }
+      val backend = when {
+        requireFullGraph -> "onnxruntime-qnn"
+        qnnProfileObserved -> "onnxruntime-qnn-mixed"
+        else -> "onnxruntime-qnn-mixed-unverified"
+      }
+      val backendLabel = when {
+        requireFullGraph -> "Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)"
+        qnnProfileObserved -> "Qualcomm QNN/HTP + CPU 혼합 · QNN 노드 실행 확인 · 전체 그래프 실패: ${shortError(strictFailure)}"
+        else -> "QNN 혼합 세션 예열 완료 · ORT 프로파일에서 QNN 노드 확인 불가 · 전체 그래프 실패: ${shortError(strictFailure)}"
+      }
       QnnAttempt(
         setup = SessionSetup(
           options = qnnOptions,
-          session = createAndWarmSession(modelFile, qnnOptions),
-          backend = "onnxruntime-qnn",
-          backendLabel = "Qualcomm QNN/HTP NPU(전체 그래프 · 예열 완료)",
+          session = session,
+          backend = backend,
+          backendLabel = "$QNN_STACK_LABEL · $backendLabel",
         ),
       )
     } catch (error: Exception) {
       qnnOptions.close()
+      Log.w(TAG, "QNN ${if (requireFullGraph) "full" else "mixed"} failed: ${diagnosticError(error)}")
       QnnAttempt(error = error)
     } catch (error: LinkageError) {
       qnnOptions.close()
+      Log.w(TAG, "QNN native load failed: ${diagnosticError(error)}")
       QnnAttempt(error = error)
+    }
+  }
+
+  private fun qnnEpDevices(): List<OrtEpDevice> {
+    synchronized(QNN_REGISTRATION_LOCK) {
+      if (!qnnPluginRegistered) {
+        environment.registerExecutionProviderLibrary(QNN_EP_NAME, QNN_PLUGIN_LIBRARY)
+        qnnPluginRegistered = true
+      }
+    }
+    return environment.epDevices.filter { it.epName == QNN_EP_NAME }.also {
+      require(it.isNotEmpty()) { "$QNN_EP_NAME 기기를 찾지 못했습니다." }
+    }
+  }
+
+  private fun finishProfilingAndFindQnn(session: OrtSession): Boolean {
+    val profilePath = try {
+      session.endProfiling()
+    } catch (error: Exception) {
+      Log.w(TAG, "ORT QNN profile finish failed: ${diagnosticError(error)}")
+      return false
+    }
+    val profileFile = File(profilePath)
+    return try {
+      val events = JSONArray(profileFile.readText())
+      (0 until events.length()).any { index ->
+        events.optJSONObject(index)
+          ?.optJSONObject("args")
+          ?.optString("provider") == QNN_EP_NAME
+      }
+    } catch (error: Exception) {
+      Log.w(TAG, "ORT QNN profile parse failed: ${diagnosticError(error)}")
+      false
+    } finally {
+      profileFile.delete()
     }
   }
 
@@ -312,18 +397,28 @@ class YoloDetector(
     setIntraOpNumThreads(max(1, Runtime.getRuntime().availableProcessors() / 2))
   }
 
-  private fun shortError(error: Throwable): String =
-    (error.message ?: error.javaClass.simpleName).lineSequence().first().take(120)
+  private fun shortError(error: Throwable?): String = error?.let(::diagnosticError)?.take(240) ?: "알 수 없음"
 
-  private fun qnnErrorLabel(error: Throwable): String {
+  private fun diagnosticError(error: Throwable): String =
+    generateSequence(error) { it.cause }
+      .take(4)
+      .joinToString(" <- ") { cause ->
+        val message = (cause.message ?: "메시지 없음").replace(Regex("\\s+"), " ").trim()
+        "${cause.javaClass.simpleName}: $message"
+      }
+      .take(800)
+
+  private fun qnnErrorLabel(stage: String, error: Throwable): String {
     val message = error.message.orEmpty()
     val reason = when {
       message.contains("default CPU EP", ignoreCase = true) -> "모델 그래프 일부 HTP 미지원"
       message.contains("dynamic", ignoreCase = true) -> "동적 shape 미지원"
+      message.contains("device", ignoreCase = true) -> "QNN HTP 기기 검색 실패"
+      message.contains("library", ignoreCase = true) -> "QNN 라이브러리 로딩 실패"
       message.contains("backend", ignoreCase = true) -> "QNN HTP 백엔드 초기화 실패"
       else -> "QNN 세션 생성 실패"
     }
-    return "QNN 폴백: $reason (${shortError(error)})"
+    return "QNN $stage 실패: $reason (${shortError(error)})"
   }
 
   private data class PreparedInput(
@@ -348,6 +443,12 @@ class YoloDetector(
   )
 
   companion object {
+    private const val TAG = "CarrotExternalAI"
+    private const val QNN_EP_NAME = "QNNExecutionProvider"
+    private const val QNN_PLUGIN_LIBRARY = "libonnxruntime_providers_qnn.so"
+    private const val QNN_STACK_LABEL = "ORT 1.26.0 · QNN EP 2.4.0 · QAIRT 2.48.0"
+    private val QNN_REGISTRATION_LOCK = Any()
+    @Volatile private var qnnPluginRegistered = false
     val SUPPORTED_INPUT_SIZES = setOf(320, 416, 640)
 
     private fun nanosToMillis(nanos: Long): Double = nanos / 1_000_000.0

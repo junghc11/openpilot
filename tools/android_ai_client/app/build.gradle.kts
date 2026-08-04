@@ -16,8 +16,8 @@ android {
     applicationId = "ai.carrotpilot.external"
     minSdk = 29
     targetSdk = 35
-    versionCode = 14
-    versionName = "0.11.0"
+    versionCode = 15
+    versionName = "0.12.0"
     buildConfigField("boolean", "QNN_EP_INCLUDED", qnnEpIncluded.toString())
     ndk {
       abiFilters += targetAbi
@@ -48,9 +48,9 @@ android {
 }
 
 dependencies {
+  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
   if (qnnEpIncluded) {
-    implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.24.3")
-  } else {
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.3")
+    runtimeOnly("com.qualcomm.qti:onnxruntime-android-qnn:2.4.0")
+    runtimeOnly("com.qualcomm.qti:qnn-runtime:2.48.0")
   }
 }

@@ -51,6 +51,7 @@ class MainActivity : Activity() {
   private lateinit var deleteModelButton: Button
   private lateinit var modelLabel: TextView
   private lateinit var backendBadge: TextView
+  private lateinit var acceleratorDetail: TextView
   private lateinit var analysisConsole: TextView
   private lateinit var analysisConsoleScroll: ScrollView
   private lateinit var status: TextView
@@ -289,6 +290,15 @@ class MainActivity : Activity() {
       }, weighted())
       addView(runtimeRow, matchWidth())
 
+      acceleratorDetail = label("가속 진단 대기", 12f, COLOR_MUTED).apply {
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        setTextIsSelectable(true)
+        background = roundedBackground(COLOR_SURFACE_ALT, 10f, COLOR_BORDER)
+      }
+      addView(acceleratorDetail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        topMargin = dp(14)
+      })
+
       addView(divider(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
         topMargin = dp(18)
         bottomMargin = dp(14)
@@ -435,14 +445,17 @@ class MainActivity : Activity() {
     addView(card().apply {
       addView(sectionTitle("가속 우선순위"))
       addView(label(if (BuildConfig.QNN_EP_INCLUDED) {
-        "Qualcomm QNN/HTP 전체 그래프 → NNAPI → CPU"
+        "Qualcomm QNN/HTP 전체 그래프 → QNN+CPU 혼합 → NNAPI → CPU"
       } else {
         "NNAPI → CPU · QNN/HTP 런타임 미포함"
       }, 14f, if (BuildConfig.QNN_EP_INCLUDED) COLOR_GREEN else COLOR_MUTED).apply { setPadding(0, dp(7), 0, 0) })
       addView(label("eNPU는 CPU 폴백을 금지한 QNN/HTP 전체 그래프 예열까지 성공했을 때만 표시됩니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(8), 0, 0)
       })
-      addView(label("C3X가 없어도 세션 시작 즉시 더미 입력으로 사전 점검합니다. eNPU·eACCEL·eCPU 결과가 연결 전에 표시됩니다.", 12f, COLOR_MUTED).apply {
+      addView(label("eNPU+CPU는 ORT 프로파일에서 QNN 노드 실행이 확인된 혼합 경로입니다. eQNN?은 QNN 세션만 열렸고 실제 노드 배치는 확인하지 못한 상태입니다.", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(6), 0, 0)
+      })
+      addView(label("C3X가 없어도 세션 시작 즉시 더미 입력으로 사전 점검하며, SoC와 실패 원문을 가속 진단에 유지합니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(6), 0, 0)
       })
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -837,6 +850,7 @@ class MainActivity : Activity() {
     val followRate = intent.getDoubleExtra(ExternalAIService.EXTRA_FOLLOW_RATE, 0.0)
     val skippedFps = intent.getDoubleExtra(ExternalAIService.EXTRA_SKIPPED_FPS, 0.0)
     val badge = intent.getStringExtra(ExternalAIService.EXTRA_ACCELERATOR_BADGE) ?: "대기"
+    val detail = intent.getStringExtra(ExternalAIService.EXTRA_ACCELERATOR_DETAIL)
     currentModelValue.text = model
     videoFpsValue.text = "%.1f".format(videoFps)
     aiFpsValue.text = "%.1f".format(aiFps)
@@ -845,10 +859,13 @@ class MainActivity : Activity() {
     backendBadge.text = badge
     backendBadge.background = roundedBackground(when (badge) {
       "eNPU" -> COLOR_GREEN
+      "eNPU+CPU" -> COLOR_GREEN
+      "eQNN?" -> COLOR_ORANGE_DARK
       "eACCEL" -> COLOR_ORANGE_DARK
       "eCPU" -> COLOR_PURPLE
       else -> COLOR_BADGE_IDLE
     }, 18f)
+    if (!detail.isNullOrBlank()) acceleratorDetail.text = detail
   }
 
   private fun updateConnectionStatus(message: String) {
