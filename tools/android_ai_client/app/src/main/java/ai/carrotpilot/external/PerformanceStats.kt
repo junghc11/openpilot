@@ -9,6 +9,8 @@ data class FramePerformance(
   val runtimeMs: Double,
   val postprocessMs: Double,
   val phoneTotalMs: Double,
+  val effectiveFps: Int = 0,
+  val performanceMode: String = "normal",
 ) {
   val aiPipelineMs: Double
     get() = preprocessMs + runtimeMs + postprocessMs

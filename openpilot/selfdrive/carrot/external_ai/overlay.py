@@ -41,6 +41,7 @@ class ExternalAIOverlayObject:
   y: float
   width: float
   height: float
+  track_id: int = 0
 
 
 class TrafficLightStateStabilizer:
@@ -185,8 +186,20 @@ def phone_ai_status_text(
     object_count = len(objects)
   except TypeError:
     object_count = 0
+  scene_mode = str(_field(state, "sceneMode", "day") or "day").strip().lower()
+  performance_mode = str(_field(state, "performanceMode", "normal") or "normal").strip().lower()
+  try:
+    effective_fps = max(0, int(_field(state, "effectiveFps", 0)))
+  except (TypeError, ValueError):
+    effective_fps = 0
+  scene_label = " · NIGHT" if scene_mode == "night" else ""
+  performance_label = f" · {effective_fps}FPS" if effective_fps > 0 else ""
+  if performance_mode == "thermal":
+    performance_label += "·열보호"
+  elif performance_mode == "reduced":
+    performance_label += "·부하조절"
   if input_width > 0 and inference_ms > 0.0:
-    return f"외부 AI · {backend} · {input_width} · 총{latency_ms:.0f}/AI{inference_ms:.0f}ms · {object_count}개", True
+    return f"외부 AI · {backend} · {input_width}{scene_label}{performance_label} · 총{latency_ms:.0f}/AI{inference_ms:.0f}ms · {object_count}개", True
   return f"외부 AI · {backend} · {latency_ms:.0f}ms · {object_count}개", True
 
 
@@ -212,6 +225,7 @@ def phone_ai_overlay_objects(
       y1 = float(_field(item, "y1"))
       x2 = float(_field(item, "x2"))
       y2 = float(_field(item, "y2"))
+      track_id = int(_field(item, "trackId", 0))
     except (TypeError, ValueError):
       continue
     if not class_name or not all(math.isfinite(value) for value in (confidence, x1, y1, x2, y2)):
@@ -225,5 +239,6 @@ def phone_ai_overlay_objects(
       y=screen_y + y1 * screen_height,
       width=(x2 - x1) * screen_width,
       height=(y2 - y1) * screen_height,
+      track_id=max(0, track_id),
     ))
   return tuple(output)

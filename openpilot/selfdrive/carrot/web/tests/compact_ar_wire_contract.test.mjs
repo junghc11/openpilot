@@ -50,6 +50,7 @@ const arContract = {
   phoneAIState: [22, [
     "valid", "connected", "frameId", "latencyMs", "modelName", "backend",
     "trafficLightState", "trafficLightConfidence", "objects",
+    "sceneMode", "sceneBrightness", "effectiveFps", "performanceMode",
   ]],
 };
 
@@ -75,6 +76,7 @@ const nestedContract = {
   NAVI_ROUTE_SCHEMA: ["present", "remainingDistanceM", "remainingTimeSec", "movedDistanceM", "totalDistanceM", "polyline"],
   NAVI_STATUS_SCHEMA: ["guidanceActive", "offRoute", "routePresent"],
   XYZ_MEASUREMENT_SCHEMA: ["x", "y", "z", "xStd", "yStd", "zStd", "valid"],
+  PHONE_AI_OBJECT_SCHEMA: ["classId", "className", "confidence", "x1", "y1", "x2", "y2", "trackId"],
 };
 
 const browserNestedNames = {
@@ -87,6 +89,7 @@ const browserNestedNames = {
   NAVI_ROUTE_SCHEMA: "naviRoute",
   NAVI_STATUS_SCHEMA: "naviStatus",
   XYZ_MEASUREMENT_SCHEMA: "xyzMeasurement",
+  PHONE_AI_OBJECT_SCHEMA: "phoneAiObject",
 };
 
 function pythonDeclarationFields(source) {
@@ -234,7 +237,7 @@ test("native AR encoders retain the shared field sequence and route limit", () =
   );
   assert.match(functionBody(nativeSource, "append_model_leads"), /find_value\(reader, "leadsV3"\)/);
   assertTokensInOrder(functionBody(nativeSource, "append_phone_ai_objects"), [
-    "objects", "classId", "className", "confidence", "x1", "y1", "x2", "y2",
+    "objects", "classId", "className", "confidence", "x1", "y1", "x2", "y2", "trackId",
   ], "native phone AI objects");
   assert.match(functionBody(nativeSource, "encode_phone_ai_state"), /append_phone_ai_objects/);
 

@@ -32,6 +32,10 @@ def build_phone_ai_payload(
     "backend": result.backend if valid else "",
     "trafficLightState": result.traffic_light_state if valid else "unknown",
     "trafficLightConfidence": result.traffic_light_confidence if valid else 0.0,
+    "sceneMode": result.scene_mode if valid else "day",
+    "sceneBrightness": result.scene_brightness if valid else 0.0,
+    "effectiveFps": result.effective_fps if valid else 0,
+    "performanceMode": result.performance_mode if valid else "normal",
     "objects": [
       {
         "classId": item.class_id,
@@ -41,6 +45,7 @@ def build_phone_ai_payload(
         "y1": item.y1,
         "x2": item.x2,
         "y2": item.y2,
+        "trackId": item.track_id,
       }
       for item in (result.objects if valid else ())
     ],

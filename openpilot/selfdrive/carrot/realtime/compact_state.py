@@ -191,6 +191,7 @@ PHONE_AI_OBJECT_SCHEMA = (
   ("y1", "f32"),
   ("x2", "f32"),
   ("y2", "f32"),
+  ("trackId", "u32"),
 )
 
 
@@ -443,6 +444,10 @@ SERVICE_SCHEMAS: dict[str, tuple[int, tuple[tuple[Any, ...], ...]]] = {
     ("trafficLightState", "text"),
     ("trafficLightConfidence", "f32"),
     ("objects", ("struct_list", PHONE_AI_OBJECT_SCHEMA)),
+    ("sceneMode", "text"),
+    ("sceneBrightness", "f32"),
+    ("effectiveFps", "u16"),
+    ("performanceMode", "text"),
   )),
 }
 

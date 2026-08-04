@@ -28,6 +28,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
 class ExternalAIService : Service() {
@@ -38,6 +39,8 @@ class ExternalAIService : Service() {
   private var wifiLock: WifiManager.WifiLock? = null
   private var lastStatus = "중지됨"
   private val analysisTimeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+  private val captureRequest = AtomicReference<String?>(null)
+  private val benchmarkRequest = AtomicBoolean(false)
 
   override fun onCreate() {
     super.onCreate()
@@ -48,6 +51,17 @@ class ExternalAIService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_STOP -> stopClient()
+      ACTION_CAPTURE_SAMPLE -> {
+        val captureType = intent.getStringExtra(EXTRA_CAPTURE_TYPE)
+        if (captureType in setOf(DiagnosticSampleSaver.TYPE_FALSE_POSITIVE, DiagnosticSampleSaver.TYPE_MISSED_DETECTION)) {
+          captureRequest.set(captureType)
+          publishCaptureStatus("다음 분석 프레임을 저장합니다.")
+        }
+      }
+      ACTION_BENCHMARK_MODELS -> {
+        benchmarkRequest.set(true)
+        publishBenchmarkResult("연결된 실영상의 동일 프레임으로 설치 모델 비교를 준비합니다.")
+      }
       ACTION_START -> {
         val config = ServiceConfig.fromIntent(intent)
         startAsForeground("모델 준비 중")
@@ -86,6 +100,7 @@ class ExternalAIService : Service() {
         copyModelToCache(config.modelUri),
         config.threshold,
         config.inputSize,
+        classThresholds = config.classThresholds,
         tryQnn = modelSpec?.qnnOptimized != false,
         qnnSkipReason = if (modelSpec?.qnnOptimized == false) {
           "QNN 건너뜀: Dynamic FP32 CPU 호환 모델"
@@ -190,7 +205,9 @@ class ExternalAIService : Service() {
     token: AtomicBoolean,
   ) {
     val resultAddress = InetAddress.getByName(targetHost)
-    val targetIntervalNs = 1_000_000_000L / config.targetFps
+    var effectiveFps = config.targetFps
+    var performanceMode = "normal"
+    var targetIntervalNs = 1_000_000_000L / effectiveFps
     var lastInferenceStartNs = 0L
     var receivedCount = 0
     var inferenceCount = 0
@@ -202,6 +219,9 @@ class ExternalAIService : Service() {
     var lastTransport = "대기"
     var previousEncoding = ""
     var lastAnalysisBroadcastNs = 0L
+    val tracker = ObjectTracker()
+    val trafficLightStabilizer = TrafficLightStateStabilizer()
+    val performanceGovernor = AdaptivePerformanceGovernor(config.targetFps)
     ReusableJpegDecoder().use { jpegDecoder ->
       ReusableH264Decoder().use { h264Decoder ->
         while (token.get()) {
@@ -232,7 +252,18 @@ class ExternalAIService : Service() {
           }
           val decodeEndNs = SystemClock.elapsedRealtimeNanos()
           val inferenceStartNs = decodeEndNs
-          val detectionResult = detector.detect(bitmap)
+          val rawResult = detector.detect(bitmap)
+          val trackedDetections = tracker.update(rawResult.detections)
+          val stableTrafficLight = trafficLightStabilizer.update(
+            rawState = rawResult.trafficLightState,
+            rawConfidence = rawResult.trafficLightConfidence,
+            trafficLightDetected = trackedDetections.any { it.className == "traffic light" },
+          )
+          val detectionResult = rawResult.copy(
+            detections = trackedDetections,
+            trafficLightState = stableTrafficLight.state,
+            trafficLightConfidence = stableTrafficLight.confidence,
+          )
           val inferenceEndNs = SystemClock.elapsedRealtimeNanos()
           lastInferenceStartNs = inferenceStartNs
           lastTransport = if (inferenceFrame.encoding == FrameProtocol.ENCODING_H264) "H.264 HW" else "JPEG"
@@ -242,6 +273,8 @@ class ExternalAIService : Service() {
             runtimeMs = detectionResult.runtimeMs,
             postprocessMs = detectionResult.postprocessMs,
             phoneTotalMs = nanosToMillis(inferenceEndNs - inferenceFrame.phoneReceiveTimestampNs),
+            effectiveFps = effectiveFps,
+            performanceMode = performanceMode,
           )
           performanceStats.add(performance)
           inferenceCount++
@@ -258,6 +291,26 @@ class ExternalAIService : Service() {
             modelName,
             detector.backend,
           )
+          captureRequest.getAndSet(null)?.let { captureType ->
+            try {
+              val saved = DiagnosticSampleSaver.save(
+                context = this,
+                bitmap = bitmap,
+                captureType = captureType,
+                frame = inferenceFrame,
+                result = detectionResult,
+                performance = performance,
+                modelName = modelDisplayName,
+                backend = detector.backend,
+              )
+              publishCaptureStatus("저장 완료: ${saved.baseName}\n사진/Pictures 및 JSON/Download의 CarrotExternalAI 폴더")
+            } catch (error: Exception) {
+              publishCaptureStatus("저장 실패: ${error.message}")
+            }
+          }
+          if (benchmarkRequest.getAndSet(false)) {
+            publishBenchmarkResult(runInstalledModelBenchmark(bitmap, config, detector, modelDisplayName))
+          }
           if (inferenceEndNs - lastAnalysisBroadcastNs >= ANALYSIS_BROADCAST_INTERVAL_NS) {
             publishAnalysisLog(buildAnalysisLog(
               modelDisplayName = modelDisplayName,
@@ -281,6 +334,16 @@ class ExternalAIService : Service() {
             }
             val inferenceFps = inferenceCount / seconds
             val performanceSummary = performanceStats.summary()
+            val targetAttainment = if (effectiveFps > 0) (inferenceFps / effectiveFps * 100.0).coerceIn(0.0, 100.0) else 0.0
+            val thermalStatus = getSystemService(PowerManager::class.java).currentThermalStatus
+            val decision = performanceGovernor.update(
+              p95Ms = performanceSummary.p95PhoneTotalMs,
+              followRate = targetAttainment,
+              thermalStatus = thermalStatus,
+            )
+            effectiveFps = decision.effectiveFps
+            performanceMode = decision.mode
+            targetIntervalNs = 1_000_000_000L / effectiveFps
             updateStatus(buildStatus(
               config = config,
               targetHost = targetHost,
@@ -292,6 +355,10 @@ class ExternalAIService : Service() {
               objectCount = lastObjects,
               backendLabel = detector.backendLabel,
               transportLabel = lastTransport,
+              sceneMode = detectionResult.sceneMode,
+              sceneBrightness = detectionResult.sceneBrightness,
+              effectiveFps = effectiveFps,
+              performanceMode = performanceMode,
             ))
             publishMetrics(
               modelDisplayName = modelDisplayName,
@@ -299,6 +366,8 @@ class ExternalAIService : Service() {
               inferenceFps = inferenceFps,
               backend = detector.backend,
               backendLabel = detector.backendLabel,
+              effectiveFps = effectiveFps,
+              performanceMode = performanceMode,
             )
             receivedCount = 0
             inferenceCount = 0
@@ -322,12 +391,17 @@ class ExternalAIService : Service() {
     objectCount: Int,
     backendLabel: String,
     transportLabel: String,
+    sceneMode: String,
+    sceneBrightness: Float,
+    effectiveFps: Int,
+    performanceMode: String,
   ): String {
     val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     val batteryTemp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
     val thermalStatus = getSystemService(PowerManager::class.java).currentThermalStatus
     return "연결됨: $targetHost:${config.framePort}\n" +
       "입력 ${inputWidth}×${inputHeight} · 수신 ${"%.1f".format(receiveFps)} · 처리 ${"%.1f".format(inferenceFps)} FPS\n" +
+      "장면 ${localizedSceneMode(sceneMode)}(${"%.0f".format(sceneBrightness * 100f)}%) · 자동 성능 ${localizedPerformanceMode(performanceMode)} ${effectiveFps}/${config.targetFps} FPS\n" +
       "폰 처리 평균 ${"%.1f".format(performance.averagePhoneTotalMs)} · p95 ${"%.1f".format(performance.p95PhoneTotalMs)} ms\n" +
       "$transportLabel 디코드 ${"%.1f".format(performance.averageDecodeMs)} · 전처리 ${"%.1f".format(performance.averagePreprocessMs)} · ORT ${"%.1f".format(performance.averageRuntimeMs)} · 후처리 ${"%.1f".format(performance.averagePostprocessMs)} ms\n" +
       "객체 ${objectCount}개 · 표본 ${performance.samples}개\n" +
@@ -363,7 +437,8 @@ class ExternalAIService : Service() {
       ""
     }
     val header = "${analysisTimeFormat.format(Date())} | frame=${frame.frameId} | ${detections.size} objects\n" +
-      "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | total ${"%.1f".format(performance.phoneTotalMs)} ms" +
+      "$modelDisplayName | ${acceleratorBadge(backend)} | $transportLabel | ${localizedSceneMode(detectionResult.sceneMode)} " +
+      "| ${localizedPerformanceMode(performance.performanceMode)} ${performance.effectiveFps} FPS | total ${"%.1f".format(performance.phoneTotalMs)} ms" +
       trafficLightLine
     if (detections.isEmpty()) return "$header\n  객체 없음"
     val objects = detections.take(MAX_CONSOLE_OBJECTS).mapIndexed { index, detection ->
@@ -373,7 +448,7 @@ class ExternalAIService : Service() {
       val y2 = (detection.y2 * frame.height).roundToInt().coerceIn(0, frame.height)
       val centerX = (x1 + x2) / 2
       val centerY = (y1 + y2) / 2
-      "  ${index + 1}. ${localizedObjectName(detection.className)}(${detection.className}) " +
+      "  ${index + 1}. #${detection.trackId} ${localizedObjectName(detection.className)}(${detection.className}) " +
         "${"%.1f".format(detection.confidence * 100f)}% | box=($x1,$y1)-($x2,$y2) | center=($centerX,$centerY)"
     }
     val omitted = detections.size - objects.size
@@ -410,6 +485,17 @@ class ExternalAIService : Service() {
     }
   }
 
+  private fun localizedSceneMode(mode: String): String = when (mode) {
+    LowLightPolicy.NIGHT -> "야간 보정"
+    else -> "주간"
+  }
+
+  private fun localizedPerformanceMode(mode: String): String = when (mode) {
+    "thermal" -> "열 보호"
+    "reduced" -> "부하 조절"
+    else -> "정상"
+  }
+
   private fun acceleratorBadge(backend: String): String = when (backend) {
     "onnxruntime-qnn",
     "onnxruntime-qnn-mixed",
@@ -428,6 +514,8 @@ class ExternalAIService : Service() {
     inferenceFps: Double,
     backend: String,
     backendLabel: String,
+    effectiveFps: Int = 0,
+    performanceMode: String = "normal",
   ) {
     val followRate = if (receiveFps > 0.0) (inferenceFps / receiveFps * 100.0).coerceIn(0.0, 100.0) else 0.0
     val skippedFps = (receiveFps - inferenceFps).coerceAtLeast(0.0)
@@ -439,7 +527,86 @@ class ExternalAIService : Service() {
       putExtra(EXTRA_SKIPPED_FPS, skippedFps)
       putExtra(EXTRA_ACCELERATOR_BADGE, acceleratorBadge(backend))
       putExtra(EXTRA_ACCELERATOR_DETAIL, "기기 ${deviceSummary()}\n$backendLabel")
+      putExtra(EXTRA_EFFECTIVE_FPS, effectiveFps)
+      putExtra(EXTRA_PERFORMANCE_MODE, performanceMode)
     })
+  }
+
+  private fun runInstalledModelBenchmark(
+    bitmap: android.graphics.Bitmap,
+    config: ServiceConfig,
+    activeDetector: YoloDetector,
+    activeModelName: String,
+  ): String {
+    val installed = RecommendedModels.ALL.filter { RecommendedModels.isInstalled(this, it) }
+    if (installed.isEmpty()) return "비교할 설치 모델이 없습니다."
+    val startedTemperature = batteryTemperatureC()
+    val results = mutableListOf<ModelBenchmarkResult>()
+    installed.forEachIndexed { index, model ->
+      publishBenchmarkResult("모델 비교 ${index + 1}/${installed.size}: ${model.displayName}")
+      var candidate: YoloDetector? = null
+      try {
+        val detector = if (model.displayName == activeModelName) activeDetector else {
+          YoloDetector(
+            modelFile = RecommendedModels.installedFile(this, model),
+            confidenceThreshold = config.threshold,
+            requestedInputSize = model.fixedInputSize ?: config.inputSize,
+            classThresholds = config.classThresholds,
+            tryQnn = model.qnnOptimized,
+            qnnSkipReason = if (model.qnnOptimized) "" else "Dynamic FP32 CPU 호환 모델",
+          ).also { candidate = it }
+        }
+        detector.detect(bitmap)
+        val samples = ArrayList<Double>(MODEL_BENCHMARK_RUNS)
+        var objectTotal = 0
+        repeat(MODEL_BENCHMARK_RUNS) {
+          val startNs = SystemClock.elapsedRealtimeNanos()
+          val result = detector.detect(bitmap)
+          samples += nanosToMillis(SystemClock.elapsedRealtimeNanos() - startNs)
+          objectTotal += result.detections.size
+        }
+        results += ModelBenchmarkResult(
+          modelName = model.displayName,
+          backend = acceleratorBadge(detector.backend),
+          p95Ms = samples.maxOrNull() ?: 0.0,
+          averageMs = samples.average(),
+          averageObjects = objectTotal.toDouble() / MODEL_BENCHMARK_RUNS,
+        )
+      } catch (error: Exception) {
+        results += ModelBenchmarkResult(model.displayName, "실패", Double.POSITIVE_INFINITY, 0.0, 0.0, error.message)
+      } finally {
+        candidate?.close()
+      }
+    }
+    val successful = results.filter { it.p95Ms.isFinite() }
+    val maximumObjects = successful.maxOfOrNull { it.averageObjects } ?: 0.0
+    val best = successful
+      .filter { maximumObjects <= 0.0 || it.averageObjects >= maximumObjects * 0.60 }
+      .minByOrNull { it.p95Ms }
+    val temperatureDelta = batteryTemperatureC() - startedTemperature
+    return buildString {
+      append("동일 실영상 프레임 · 각 ${MODEL_BENCHMARK_RUNS}회 · 온도 변화 ${"%+.1f".format(temperatureDelta)}°C")
+      results.forEach { result ->
+        append("\n${result.modelName}: ")
+        if (!result.p95Ms.isFinite()) append("실패 · ${result.error ?: "알 수 없음"}") else {
+          append("${result.backend} · ${"%.1f".format(1_000.0 / result.averageMs)} FPS · p95 ${"%.1f".format(result.p95Ms)} ms · 객체 ${"%.1f".format(result.averageObjects)}")
+        }
+      }
+      best?.let { append("\n자동 추천: ${it.modelName} (최대 탐지 수의 60% 이상 중 최저 p95)") }
+    }
+  }
+
+  private fun batteryTemperatureC(): Double {
+    val battery = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    return battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0) ?: 0.0
+  }
+
+  private fun publishBenchmarkResult(message: String) {
+    sendBroadcast(Intent(ACTION_BENCHMARK_RESULT).setPackage(packageName).putExtra(EXTRA_BENCHMARK_RESULT, message))
+  }
+
+  private fun publishCaptureStatus(message: String) {
+    sendBroadcast(Intent(ACTION_CAPTURE_RESULT).setPackage(packageName).putExtra(EXTRA_CAPTURE_RESULT, message))
   }
 
   private fun thermalStatusLabel(status: Int): String = when (status) {
@@ -565,6 +732,10 @@ class ExternalAIService : Service() {
     const val ACTION_STATUS = "ai.carrotpilot.external.STATUS"
     const val ACTION_ANALYSIS = "ai.carrotpilot.external.ANALYSIS"
     const val ACTION_METRICS = "ai.carrotpilot.external.METRICS"
+    const val ACTION_CAPTURE_SAMPLE = "ai.carrotpilot.external.CAPTURE_SAMPLE"
+    const val ACTION_CAPTURE_RESULT = "ai.carrotpilot.external.CAPTURE_RESULT"
+    const val ACTION_BENCHMARK_MODELS = "ai.carrotpilot.external.BENCHMARK_MODELS"
+    const val ACTION_BENCHMARK_RESULT = "ai.carrotpilot.external.BENCHMARK_RESULT"
     const val EXTRA_HOST = "host"
     const val EXTRA_FRAME_PORT = "frame_port"
     const val EXTRA_RESULT_PORT = "result_port"
@@ -573,6 +744,8 @@ class ExternalAIService : Service() {
     const val EXTRA_INPUT_SIZE = "input_size"
     const val EXTRA_MODEL_URI = "model_uri"
     const val EXTRA_AUTO_DISCOVER = "auto_discover"
+    const val EXTRA_CLASS_THRESHOLDS = "class_thresholds"
+    const val EXTRA_CAPTURE_TYPE = "capture_type"
     const val EXTRA_STATUS = "status"
     const val EXTRA_DISCOVERED_HOST = "discovered_host"
     const val EXTRA_ANALYSIS_LOG = "analysis_log"
@@ -583,6 +756,10 @@ class ExternalAIService : Service() {
     const val EXTRA_SKIPPED_FPS = "skipped_fps"
     const val EXTRA_ACCELERATOR_BADGE = "accelerator_badge"
     const val EXTRA_ACCELERATOR_DETAIL = "accelerator_detail"
+    const val EXTRA_EFFECTIVE_FPS = "effective_fps"
+    const val EXTRA_PERFORMANCE_MODE = "performance_mode"
+    const val EXTRA_CAPTURE_RESULT = "capture_result"
+    const val EXTRA_BENCHMARK_RESULT = "benchmark_result"
     @Volatile var serviceActive = false
       private set
     @Volatile var clientConnected = false
@@ -598,6 +775,7 @@ class ExternalAIService : Service() {
     private const val PREFERENCE_HOST = "host"
     private const val ANALYSIS_BROADCAST_INTERVAL_NS = 200_000_000L
     private const val MAX_CONSOLE_OBJECTS = 12
+    private const val MODEL_BENCHMARK_RUNS = 3
   }
 }
 
@@ -610,6 +788,7 @@ private data class ServiceConfig(
   val inputSize: Int,
   val modelUri: Uri,
   val autoDiscover: Boolean,
+  val classThresholds: ClassThresholds,
 ) {
   companion object {
     fun fromIntent(intent: Intent): ServiceConfig = ServiceConfig(
@@ -623,6 +802,19 @@ private data class ServiceConfig(
       },
       modelUri = Uri.parse(requireNotNull(intent.getStringExtra(ExternalAIService.EXTRA_MODEL_URI))),
       autoDiscover = intent.getBooleanExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, true),
+      classThresholds = ClassThresholds.decode(
+        intent.getStringExtra(ExternalAIService.EXTRA_CLASS_THRESHOLDS),
+        intent.getFloatExtra(ExternalAIService.EXTRA_THRESHOLD, 0.35f),
+      ),
     )
   }
 }
+
+private data class ModelBenchmarkResult(
+  val modelName: String,
+  val backend: String,
+  val p95Ms: Double,
+  val averageMs: Double,
+  val averageObjects: Double,
+  val error: String? = null,
+)

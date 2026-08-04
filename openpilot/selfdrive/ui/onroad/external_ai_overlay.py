@@ -196,7 +196,8 @@ class ExternalAIOverlayRenderer:
     outline = rl.Color(color.r, color.g, color.b, 230)
     frame = rl.Rectangle(x, y, width, height)
     rl.draw_rectangle_rounded_lines_ex(frame, 0.10, 6, max(2.0, min(width, height) * 0.018), outline)
-    label = f"{external_ai_display_name(item.class_name, translate=tr)} {item.confidence * 100.0:.0f}%"
+    track_label = f"#{item.track_id} " if item.track_id > 0 else ""
+    label = f"{track_label}{external_ai_display_name(item.class_name, translate=tr)} {item.confidence * 100.0:.0f}%"
     font_size = max(18, min(34, int(height * 0.13)))
     label_font = font_fallback(self._font)
     measured = measure_text_cached(label_font, label, font_size, 0.0)

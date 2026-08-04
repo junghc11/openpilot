@@ -35,14 +35,14 @@ test("external AI draws localized object type and traffic-light color on the roa
     connected: true,
     trafficLightState: "green",
     objects: [
-      { className: "car", confidence: 0.88, x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.7 },
+      { className: "car", trackId: 12, confidence: 0.88, x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.7 },
       { className: "traffic light", confidence: 0.76, x1: 0.7, y1: 0.1, x2: 0.8, y2: 0.4 },
     ],
   }, 640, 360, 9_700, 10_000);
 
   assert.equal(drawn, 2);
   assert.equal(boxes.length, 4, "each object has a box and a label background");
-  assert.equal(labels[0].text, "차량 88%");
+  assert.equal(labels[0].text, "#12 차량 88%");
   assert.equal(labels[1].text, "신호등 · 초록 76%");
 });
 

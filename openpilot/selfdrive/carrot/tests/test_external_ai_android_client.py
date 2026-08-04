@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.13.0"' in gradle
+  assert 'versionName = "0.15.0"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle

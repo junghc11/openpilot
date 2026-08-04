@@ -33,6 +33,8 @@ data class DetectionResult(
   val postprocessMs: Double,
   val inputWidth: Int,
   val inputHeight: Int,
+  val sceneMode: String,
+  val sceneBrightness: Float,
 ) {
   val aiPipelineMs: Double
     get() = preprocessMs + runtimeMs + postprocessMs
@@ -42,6 +44,7 @@ class YoloDetector(
   modelFile: File,
   private val confidenceThreshold: Float,
   requestedInputSize: Int,
+  private val classThresholds: ClassThresholds = ClassThresholds.uniform(confidenceThreshold),
   private val tryQnn: Boolean = true,
   private val qnnSkipReason: String = "",
 ) : Closeable {
@@ -67,6 +70,7 @@ class YoloDetector(
   private val letterboxBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
   private val letterboxCanvas = Canvas(letterboxBitmap)
   private val pixels = IntArray(inputWidth * inputHeight)
+  private val lowLightPolicy = LowLightPolicy()
 
   init {
     require(inputShape.size == 4 && (inputShape[1] == 3L || inputShape[1] == -1L)) {
@@ -99,6 +103,8 @@ class YoloDetector(
           postprocessMs = nanosToMillis(postprocessEndNs - runtimeEndNs),
           inputWidth = inputWidth,
           inputHeight = inputHeight,
+          sceneMode = prepared.sceneMode,
+          sceneBrightness = prepared.sceneBrightness,
         )
       }
     }
@@ -120,15 +126,34 @@ class YoloDetector(
       )
     }
     letterboxBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+    val left = padX.toInt().coerceIn(0, inputWidth - 1)
+    val top = padY.toInt().coerceIn(0, inputHeight - 1)
+    val right = (left + scaledWidth).coerceAtMost(inputWidth)
+    val bottom = (top + scaledHeight).coerceAtMost(inputHeight)
+    var luminanceSum = 0.0
+    var luminanceSamples = 0
+    val sampleStep = max(1, min(scaledWidth, scaledHeight) / 80)
+    var sampleY = top
+    while (sampleY < bottom) {
+      var sampleX = left
+      while (sampleX < right) {
+        val pixel = pixels[sampleY * inputWidth + sampleX]
+        luminanceSum += (0.2126 * Color.red(pixel) + 0.7152 * Color.green(pixel) + 0.0722 * Color.blue(pixel)) / 255.0
+        luminanceSamples++
+        sampleX += sampleStep
+      }
+      sampleY += sampleStep
+    }
+    val scene = lowLightPolicy.assess(if (luminanceSamples > 0) (luminanceSum / luminanceSamples).toFloat() else 1f)
     val planeSize = inputWidth * inputHeight
     val tensor = inputBuffer.apply { clear() }
     pixels.forEachIndexed { index, pixel ->
-      tensor.put(index, Color.red(pixel) / 255f)
-      tensor.put(planeSize + index, Color.green(pixel) / 255f)
-      tensor.put(planeSize * 2 + index, Color.blue(pixel) / 255f)
+      tensor.put(index, lowLightPolicy.normalizeChannel(Color.red(pixel), scene.mode))
+      tensor.put(planeSize + index, lowLightPolicy.normalizeChannel(Color.green(pixel), scene.mode))
+      tensor.put(planeSize * 2 + index, lowLightPolicy.normalizeChannel(Color.blue(pixel), scene.mode))
     }
     tensor.rewind()
-    return PreparedInput(tensor, scale, padX, padY, source.width, source.height)
+    return PreparedInput(tensor, scale, padX, padY, source.width, source.height, scene.mode, scene.brightness)
   }
 
   private fun parseOutput(output: OnnxTensor, prepared: PreparedInput): List<Detection> {
@@ -153,7 +178,7 @@ class YoloDetector(
     val candidates = ArrayList<Detection>()
     for (box in 0 until boxes) {
       var bestClass = -1
-      var bestScore = confidenceThreshold
+      var bestScore = 0f
       for (classId in 0 until channels - 4) {
         val score = value(box, 4 + classId)
         if (score > bestScore) {
@@ -162,6 +187,7 @@ class YoloDetector(
         }
       }
       val className = supportedClasses[bestClass] ?: continue
+      if (bestScore < classThresholds.forClass(bestClass)) continue
       var centerX = value(box, 0)
       var centerY = value(box, 1)
       var width = value(box, 2)
@@ -205,7 +231,7 @@ class YoloDetector(
     val distances = FloatArray(4)
     for (box in 0 until boxes) {
       var bestClass = -1
-      var bestScore = confidenceThreshold
+      var bestScore = 0f
       for (classId in 0 until COCO_CLASS_COUNT) {
         val score = sigmoid(value(box, DFL_BOX_CHANNELS + classId))
         if (score > bestScore) {
@@ -214,6 +240,7 @@ class YoloDetector(
         }
       }
       val className = supportedClasses[bestClass] ?: continue
+      if (bestScore < classThresholds.forClass(bestClass)) continue
 
       for (side in 0 until 4) {
         val channelOffset = side * DFL_BINS
@@ -696,6 +723,8 @@ class YoloDetector(
     val padY: Float,
     val sourceWidth: Int,
     val sourceHeight: Int,
+    val sceneMode: String,
+    val sceneBrightness: Float,
   )
 
   private data class SessionSetup(

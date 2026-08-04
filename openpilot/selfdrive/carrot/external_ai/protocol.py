@@ -23,6 +23,8 @@ SUPPORTED_OBJECT_CLASSES = frozenset((
   "stop sign",
 ))
 SUPPORTED_TRAFFIC_LIGHT_STATES = frozenset(("unknown", "red", "yellow", "green"))
+SUPPORTED_SCENE_MODES = frozenset(("day", "night"))
+SUPPORTED_PERFORMANCE_MODES = frozenset(("normal", "reduced", "thermal"))
 
 
 class ExternalAIProtocolError(ValueError):
@@ -38,6 +40,7 @@ class ExternalAIObject:
   y1: float
   x2: float
   y2: float
+  track_id: int = 0
 
   @property
   def center_x(self) -> float:
@@ -79,6 +82,10 @@ class ExternalAIResult:
   input_height: int
   traffic_light_state: str
   traffic_light_confidence: float
+  scene_mode: str = "day"
+  scene_brightness: float = 1.0
+  effective_fps: int = 0
+  performance_mode: str = "normal"
 
 
 def _mapping(value: object, field: str) -> dict:
@@ -136,6 +143,16 @@ def _optional_traffic_light_state(root: dict) -> str:
   return parsed
 
 
+def _optional_enum_text(root: dict, field: str, supported: frozenset[str], default: str) -> str:
+  value = root.get(field, default)
+  if not isinstance(value, str):
+    raise ExternalAIProtocolError(f"{field} must be text")
+  parsed = value.strip().lower()
+  if parsed not in supported:
+    raise ExternalAIProtocolError(f"{field} is unsupported")
+  return parsed
+
+
 def _parse_object(value: object, index: int) -> ExternalAIObject:
   item = _mapping(value, f"objects[{index}]")
   class_name = _short_text(item.get("class_name"), f"objects[{index}].class_name").lower()
@@ -155,6 +172,7 @@ def _parse_object(value: object, index: int) -> ExternalAIObject:
     y1=y1,
     x2=x2,
     y2=y2,
+    track_id=_optional_integer(item, "track_id", minimum=0, maximum=1_000_000),
   )
 
 
@@ -229,6 +247,10 @@ def parse_external_ai_result(
     raise ExternalAIProtocolError("input_width and input_height must be provided together")
   traffic_light_state = _optional_traffic_light_state(root)
   traffic_light_confidence = _optional_number(root, "traffic_light_confidence", minimum=0.0, maximum=1.0)
+  scene_mode = _optional_enum_text(root, "scene_mode", SUPPORTED_SCENE_MODES, "day")
+  scene_brightness = _optional_number(root, "scene_brightness", minimum=0.0, maximum=1.0, default=1.0)
+  effective_fps = _optional_integer(root, "effective_fps", minimum=0, maximum=120)
+  performance_mode = _optional_enum_text(root, "performance_mode", SUPPORTED_PERFORMANCE_MODES, "normal")
 
   return ExternalAIResult(
     protocol_version=protocol_version,
@@ -252,6 +274,10 @@ def parse_external_ai_result(
     input_height=input_height,
     traffic_light_state=traffic_light_state,
     traffic_light_confidence=traffic_light_confidence,
+    scene_mode=scene_mode,
+    scene_brightness=scene_brightness,
+    effective_fps=effective_fps,
+    performance_mode=performance_mode,
   )
 
 

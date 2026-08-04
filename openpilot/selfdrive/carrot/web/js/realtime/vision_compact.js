@@ -95,7 +95,8 @@ window.CarrotVisionCompact = (() => {
   ];
   const phoneAiObject = [
     ["classId", "u16"], ["className", "text"], ["confidence", "f32"],
-    ["x1", "f32"], ["y1", "f32"], ["x2", "f32"], ["y2", "f32"],
+      ["x1", "f32"], ["y1", "f32"], ["x2", "f32"], ["y2", "f32"],
+      ["trackId", "u32"],
   ];
 
   const schemas = new Map([
@@ -224,7 +225,9 @@ window.CarrotVisionCompact = (() => {
       ["valid", "bool"], ["connected", "bool"], ["frameId", "u64"],
       ["latencyMs", "f32"], ["modelName", "text"], ["backend", "text"],
       ["trafficLightState", "text"], ["trafficLightConfidence", "f32"],
-      ["objects", "structlist", phoneAiObject],
+        ["objects", "structlist", phoneAiObject],
+        ["sceneMode", "text"], ["sceneBrightness", "f32"],
+        ["effectiveFps", "u16"], ["performanceMode", "text"],
     ]]],
   ]);
 

@@ -45,6 +45,7 @@ class MainActivity : Activity() {
   private lateinit var threshold: EditText
   private lateinit var inferenceFps: EditText
   private lateinit var inputSize: EditText
+  private val classThresholdInputs = linkedMapOf<Int, EditText>()
   private lateinit var autoConnect: CheckBox
   private lateinit var modelSelector: Spinner
   private lateinit var downloadModelButton: Button
@@ -68,6 +69,8 @@ class MainActivity : Activity() {
   private lateinit var followRateValue: TextView
   private lateinit var skippedFpsValue: TextView
   private lateinit var recentDetectionPreview: TextView
+  private lateinit var captureStatus: TextView
+  private lateinit var benchmarkStatus: TextView
   private lateinit var connectionSettingsPanel: LinearLayout
   private lateinit var manageConnectionButton: Button
   private lateinit var contentScroll: ScrollView
@@ -88,6 +91,15 @@ class MainActivity : Activity() {
       intent.getStringExtra(ExternalAIService.EXTRA_STATUS)?.let(::updateConnectionStatus)
       intent.getStringExtra(ExternalAIService.EXTRA_ANALYSIS_LOG)?.let(::appendAnalysisLog)
       if (intent.action == ExternalAIService.ACTION_METRICS) updatePerformanceHud(intent)
+      intent.getStringExtra(ExternalAIService.EXTRA_CAPTURE_RESULT)?.let {
+        captureStatus.text = it
+        Toast.makeText(this@MainActivity, it.lineSequence().first(), Toast.LENGTH_LONG).show()
+      }
+      intent.getStringExtra(ExternalAIService.EXTRA_BENCHMARK_RESULT)?.let {
+        benchmarkStatus.text = it
+        benchmarkStatus.setTextColor(COLOR_TEXT)
+        preferences.edit().putString(KEY_BENCHMARK_RESULT, it).apply()
+      }
       intent?.getStringExtra(ExternalAIService.EXTRA_DISCOVERED_HOST)?.let { discoveredHost ->
         if (discoveredHost.isNotBlank() && host.text.toString() != discoveredHost) {
           host.setText(discoveredHost)
@@ -114,6 +126,8 @@ class MainActivity : Activity() {
     val filter = IntentFilter(ExternalAIService.ACTION_STATUS).apply {
       addAction(ExternalAIService.ACTION_ANALYSIS)
       addAction(ExternalAIService.ACTION_METRICS)
+      addAction(ExternalAIService.ACTION_CAPTURE_RESULT)
+      addAction(ExternalAIService.ACTION_BENCHMARK_RESULT)
     }
     if (Build.VERSION.SDK_INT >= 33) {
       registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -343,6 +357,26 @@ class MainActivity : Activity() {
     }
     addView(recentDetectionPreview, matchWidth())
 
+    addView(card().apply {
+      addView(sectionTitle("오탐·미탐 학습 자료 저장"))
+      addView(label("다음 분석 프레임의 원본 사진과 추적 ID·좌표·신호등·성능 JSON을 함께 저장합니다.", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(5), 0, dp(10))
+      })
+      addView(LinearLayout(this@MainActivity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(styledButton("오탐 저장", primary = false).apply {
+          setOnClickListener { requestDiagnosticCapture(DiagnosticSampleSaver.TYPE_FALSE_POSITIVE) }
+        }, weighted())
+        addView(styledButton("미탐 저장", primary = false).apply {
+          setOnClickListener { requestDiagnosticCapture(DiagnosticSampleSaver.TYPE_MISSED_DETECTION) }
+        }, weighted().apply { leftMargin = dp(8) })
+      }, matchWidth())
+      captureStatus = label("대기 중 · 사진/Pictures, JSON/Download의 CarrotExternalAI 폴더", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(9), 0, 0)
+      }
+      addView(captureStatus, matchWidth())
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+
     addView(styledButton("세션 중지", primary = true).apply {
       setOnClickListener { stopClient() }
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply { topMargin = dp(18) })
@@ -445,6 +479,29 @@ class MainActivity : Activity() {
       threshold = addField(this, "신뢰도 임계값 (0.1~0.95)", "0.35")
       inferenceFps = addField(this, "목표 추론 FPS (1~20)", "5")
       inputSize = addField(this, "YOLO 입력 크기 (NPU 모델은 자동 고정)", "320")
+      addView(label("객체별 신뢰도", 15f, COLOR_TEXT, Typeface.BOLD).apply { setPadding(0, dp(18), 0, dp(2)) })
+      addView(label("전역값과 다르게 조절할 객체만 변경할 수 있습니다.", 12f, COLOR_MUTED))
+      listOf(
+        0 to "사람", 1 to "자전거", 2 to "차량", 3 to "오토바이",
+        5 to "버스", 7 to "트럭", 9 to "신호등", 11 to "정지표지판",
+      ).forEach { (classId, name) ->
+        classThresholdInputs[classId] = addField(this, "$name 임계값 (0.1~0.95)", "0.35")
+      }
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+
+    addView(card().apply {
+      addView(sectionTitle("설치 모델 자동 벤치마크"))
+      addView(label("C3X 연결 중 같은 실영상 프레임으로 설치 모델을 3회씩 비교합니다. 비교 중 영상 처리가 잠시 멈출 수 있습니다.", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(5), 0, dp(10))
+      })
+      addView(styledButton("설치 모델 실영상 비교", primary = true).apply {
+        setOnClickListener { requestModelBenchmark() }
+      }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+      benchmarkStatus = label("대기 중 · FPS/p95/온도 변화/탐지 수로 최저 p95 모델을 추천", 12f, COLOR_MUTED).apply {
+        setPadding(0, dp(10), 0, 0)
+        setTextIsSelectable(true)
+      }
+      addView(benchmarkStatus, matchWidth())
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
 
     addView(card().apply {
@@ -647,6 +704,27 @@ class MainActivity : Activity() {
     updateConnectionStatus("중지됨")
   }
 
+  private fun requestDiagnosticCapture(type: String) {
+    if (!ExternalAIService.clientConnected) {
+      Toast.makeText(this, "C3X 연결 후 저장할 수 있습니다.", Toast.LENGTH_LONG).show()
+      return
+    }
+    captureStatus.text = "다음 분석 프레임 저장 요청 중…"
+    startService(Intent(this, ExternalAIService::class.java).apply {
+      action = ExternalAIService.ACTION_CAPTURE_SAMPLE
+      putExtra(ExternalAIService.EXTRA_CAPTURE_TYPE, type)
+    })
+  }
+
+  private fun requestModelBenchmark() {
+    if (!ExternalAIService.clientConnected) {
+      Toast.makeText(this, "C3X 연결 후 실영상으로 비교할 수 있습니다.", Toast.LENGTH_LONG).show()
+      return
+    }
+    benchmarkStatus.text = "실영상 프레임 대기 중…"
+    startService(Intent(this, ExternalAIService::class.java).setAction(ExternalAIService.ACTION_BENCHMARK_MODELS))
+  }
+
   private fun selectModel() {
     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
       addCategory(Intent.CATEGORY_OPENABLE)
@@ -797,6 +875,10 @@ class MainActivity : Activity() {
         inputSize = activeModel?.fixedInputSize ?: inputSize.text.toString().toInt(),
         modelUri = uri ?: error("YOLO ONNX 모델을 선택하세요."),
         autoDiscover = autoDiscover,
+        classThresholds = ClassThresholds(
+          classThresholdInputs.mapValues { (_, field) -> field.text.toString().toFloat() },
+          threshold.text.toString().toFloat(),
+        ),
       ).also { it.validate() }
     } catch (error: Exception) {
       Toast.makeText(this, error.message ?: "설정값을 확인하세요.", Toast.LENGTH_LONG).show()
@@ -814,6 +896,7 @@ class MainActivity : Activity() {
       putExtra(ExternalAIService.EXTRA_INPUT_SIZE, config.inputSize)
       putExtra(ExternalAIService.EXTRA_MODEL_URI, config.modelUri.toString())
       putExtra(ExternalAIService.EXTRA_AUTO_DISCOVER, config.autoDiscover)
+      putExtra(ExternalAIService.EXTRA_CLASS_THRESHOLDS, config.classThresholds.encode())
     }
     startForegroundService(intent)
   }
@@ -825,6 +908,12 @@ class MainActivity : Activity() {
     threshold.setText(preferences.getFloat(KEY_THRESHOLD, 0.35f).toString())
     inferenceFps.setText(preferences.getInt(KEY_TARGET_FPS, 5).toString())
     inputSize.setText(preferences.getInt(KEY_INPUT_SIZE, 320).toString())
+    val storedClassThresholds = ClassThresholds.decode(
+      preferences.getString(KEY_CLASS_THRESHOLDS, null),
+      preferences.getFloat(KEY_THRESHOLD, 0.35f),
+    )
+    classThresholdInputs.forEach { (classId, field) -> field.setText(storedClassThresholds.forClass(classId).toString()) }
+    benchmarkStatus.text = preferences.getString(KEY_BENCHMARK_RESULT, benchmarkStatus.text.toString())
     autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
     logUploadUrl.setText(preferences.getString(KEY_LOG_UPLOAD_URL, DEFAULT_LOG_UPLOAD_URL))
     applyLogWindowScale(preferences.getInt(KEY_LOG_WINDOW_SCALE, 1), persist = false)
@@ -867,6 +956,7 @@ class MainActivity : Activity() {
       .putInt(KEY_TARGET_FPS, config.targetFps)
       .putInt(KEY_INPUT_SIZE, config.inputSize)
       .putString(KEY_MODEL_URI, config.modelUri.toString())
+      .putString(KEY_CLASS_THRESHOLDS, config.classThresholds.encode())
       .apply()
   }
 
@@ -980,6 +1070,8 @@ class MainActivity : Activity() {
     val skippedFps = intent.getDoubleExtra(ExternalAIService.EXTRA_SKIPPED_FPS, 0.0)
     val badge = intent.getStringExtra(ExternalAIService.EXTRA_ACCELERATOR_BADGE) ?: "대기"
     val detail = intent.getStringExtra(ExternalAIService.EXTRA_ACCELERATOR_DETAIL)
+    val effectiveFps = intent.getIntExtra(ExternalAIService.EXTRA_EFFECTIVE_FPS, 0)
+    val performanceMode = intent.getStringExtra(ExternalAIService.EXTRA_PERFORMANCE_MODE) ?: "normal"
     currentModelValue.text = model
     videoFpsValue.text = "%.1f".format(videoFps)
     aiFpsValue.text = "%.1f".format(aiFps)
@@ -991,7 +1083,14 @@ class MainActivity : Activity() {
       "eCPU" -> COLOR_PURPLE
       else -> COLOR_BADGE_IDLE
     }, 18f)
-    if (!detail.isNullOrBlank()) acceleratorDetail.text = detail
+    if (!detail.isNullOrBlank()) {
+      val modeLabel = when (performanceMode) {
+        "thermal" -> "열 보호"
+        "reduced" -> "부하 조절"
+        else -> "정상"
+      }
+      acceleratorDetail.text = if (effectiveFps > 0) "$detail\n자동 성능 $modeLabel · 목표 ${effectiveFps} FPS" else detail
+    }
   }
 
   private fun updateConnectionStatus(message: String) {
@@ -1061,6 +1160,8 @@ class MainActivity : Activity() {
     private const val KEY_THRESHOLD = "threshold"
     private const val KEY_TARGET_FPS = "target_fps"
     private const val KEY_INPUT_SIZE = "input_size"
+    private const val KEY_CLASS_THRESHOLDS = "class_thresholds"
+    private const val KEY_BENCHMARK_RESULT = "benchmark_result"
     private const val KEY_MODEL_URI = "model_uri"
     private const val KEY_AUTO_CONNECT = "auto_connect"
     private const val KEY_LOG_WINDOW_SCALE = "log_window_scale"
@@ -1090,6 +1191,7 @@ data class ClientConfig(
   val inputSize: Int,
   val modelUri: Uri,
   val autoDiscover: Boolean,
+  val classThresholds: ClassThresholds,
 ) {
   fun validate() {
     require(autoDiscover || host.isNotBlank()) { "수동 연결에는 C3/C3X/C4 IP가 필요합니다." }
@@ -1098,5 +1200,8 @@ data class ClientConfig(
     require(threshold in 0.1f..0.95f) { "신뢰도는 0.1~0.95 범위여야 합니다." }
     require(targetFps in 1..20) { "추론 FPS는 1~20 범위여야 합니다." }
     require(inputSize in YoloDetector.SUPPORTED_INPUT_SIZES) { "YOLO 입력 크기는 320, 416, 640 중 하나여야 합니다." }
+    ClassThresholds.SUPPORTED_CLASS_IDS.forEach { classId ->
+      require(classThresholds.forClass(classId) in 0.1f..0.95f) { "객체별 신뢰도는 0.1~0.95 범위여야 합니다." }
+    }
   }
 }

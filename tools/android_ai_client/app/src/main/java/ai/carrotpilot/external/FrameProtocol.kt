@@ -29,6 +29,7 @@ data class Detection(
   val y1: Float,
   val x2: Float,
   val y2: Float,
+  val trackId: Int = 0,
 )
 
 object FrameProtocol {
@@ -98,6 +99,7 @@ object FrameProtocol {
         put("y1", detection.y1.toDouble())
         put("x2", detection.x2.toDouble())
         put("y2", detection.y2.toDouble())
+        put("track_id", detection.trackId)
       })
     }
     val json = JSONObject().apply {
@@ -118,6 +120,10 @@ object FrameProtocol {
       put("input_height", detectionResult.inputHeight)
       put("traffic_light_state", detectionResult.trafficLightState)
       put("traffic_light_confidence", detectionResult.trafficLightConfidence.toDouble())
+      put("scene_mode", detectionResult.sceneMode)
+      put("scene_brightness", detectionResult.sceneBrightness.toDouble())
+      put("effective_fps", performance.effectiveFps)
+      put("performance_mode", performance.performanceMode)
       put("objects", objects)
     }.toString().toByteArray(StandardCharsets.UTF_8)
     require(json.size <= 65_507) { "탐지 결과 UDP 패킷이 너무 큽니다." }

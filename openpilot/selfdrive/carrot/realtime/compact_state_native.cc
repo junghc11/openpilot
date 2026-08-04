@@ -771,7 +771,8 @@ void append_phone_ai_objects(std::string &out, const DynamicReader &value) {
     append_f32(out, object, "x1");
     append_f32(out, object, "y1");
     append_f32(out, object, "x2");
-    append_f32(out, object, "y2");
+      append_f32(out, object, "y2");
+      append_u32(out, object, "trackId");
   }
 }
 
@@ -784,7 +785,11 @@ void encode_phone_ai_state(std::string &out, const DynamicReader &value) {
   append_text(out, value, "backend");
   append_text(out, value, "trafficLightState");
   append_f32(out, value, "trafficLightConfidence");
-  append_phone_ai_objects(out, value);
+    append_phone_ai_objects(out, value);
+    append_text(out, value, "sceneMode");
+    append_f32(out, value, "sceneBrightness");
+    append_u16(out, value, "effectiveFps");
+    append_text(out, value, "performanceMode");
 }
 
 uint8_t service_id(const std::string &service) {

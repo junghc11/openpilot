@@ -66,8 +66,11 @@ def test_phone_ai_payload_contains_fresh_detection_and_health() -> None:
     "x1": 0.1,
     "y1": 0.2,
     "x2": 0.4,
-    "y2": 0.9,
-  }]
+      "y2": 0.9,
+      "trackId": 0,
+    }]
+  assert payload["sceneMode"] == "day"
+  assert payload["performanceMode"] == "normal"
   assert payload["acceptedPackets"] == 3
   assert payload["rejectedSenders"] == 2
 
@@ -105,6 +108,9 @@ def test_phone_ai_cereal_service_uses_reserved_fork_slot() -> None:
   assert "struct PhoneAIState @0xda96579883444c35" in custom_schema
   assert "trafficLightState @23 :Text;" in custom_schema
   assert "trafficLightConfidence @24 :Float32;" in custom_schema
+  assert "trackId @7 :UInt32;" in custom_schema
+  assert "sceneMode @25 :Text;" in custom_schema
+  assert "performanceMode @28 :Text;" in custom_schema
   assert '"phoneAIState": (True, 10., 10)' in services
 
 

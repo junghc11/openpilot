@@ -224,6 +224,7 @@ struct PhoneAIState @0xda96579883444c35 {
 		y1 @4 :Float32;
 		x2 @5 :Float32;
 		y2 @6 :Float32;
+		trackId @7 :UInt32;
 	}
 
 	valid @0 :Bool;
@@ -251,6 +252,10 @@ struct PhoneAIState @0xda96579883444c35 {
 	inputHeight @22 :UInt16;
 	trafficLightState @23 :Text;
 	trafficLightConfidence @24 :Float32;
+	sceneMode @25 :Text;
+	sceneBrightness @26 :Float32;
+	effectiveFps @27 :UInt16;
+	performanceMode @28 :Text;
 }
 
 struct CustomReserved4 @0x80ae746ee2596b11 {

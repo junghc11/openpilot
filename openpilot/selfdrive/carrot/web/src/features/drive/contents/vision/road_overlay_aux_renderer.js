@@ -171,7 +171,9 @@ export function createRoadOverlayAuxRenderer(options = {}) {
       const signal = className === "traffic light" && phoneAIState.trafficLightState && phoneAIState.trafficLightState !== "unknown"
         ? ` · ${isKorean ? ({ red: "빨강", yellow: "노랑", green: "초록" }[phoneAIState.trafficLightState] || phoneAIState.trafficLightState) : phoneAIState.trafficLightState}`
         : "";
-      const label = `${localizedName}${signal} ${Math.round(confidence * 100)}%`;
+      const trackId = Math.max(0, Math.trunc(finiteNumber(object?.trackId, 0)));
+      const trackLabel = trackId > 0 ? `#${trackId} ` : "";
+      const label = `${trackLabel}${localizedName}${signal} ${Math.round(confidence * 100)}%`;
       const measuredWidth = typeof ui.measureText === "function"
         ? ui.measureText(label, fontSize)
         : label.length * fontSize * 0.62;

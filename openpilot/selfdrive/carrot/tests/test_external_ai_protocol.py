@@ -31,6 +31,10 @@ def valid_result(**changes) -> dict:
     "input_height": 320,
     "traffic_light_state": "green",
     "traffic_light_confidence": 0.86,
+    "scene_mode": "night",
+    "scene_brightness": 0.18,
+    "effective_fps": 8,
+    "performance_mode": "reduced",
     "objects": [{
       "class_id": 2,
       "class_name": "car",
@@ -39,6 +43,7 @@ def valid_result(**changes) -> dict:
       "y1": 0.30,
       "x2": 0.65,
       "y2": 0.82,
+      "track_id": 17,
     }],
   }
   result.update(changes)
@@ -63,6 +68,11 @@ def test_valid_result_is_parsed_with_measured_timing() -> None:
   assert result.traffic_light_confidence == pytest.approx(0.86)
   assert result.objects[0].class_name == "car"
   assert result.objects[0].center_x == pytest.approx(0.45)
+  assert result.objects[0].track_id == 17
+  assert result.scene_mode == "night"
+  assert result.scene_brightness == pytest.approx(0.18)
+  assert result.effective_fps == 8
+  assert result.performance_mode == "reduced"
 
 
 @pytest.mark.parametrize("protocol_version", (0, 2))
@@ -149,9 +159,13 @@ def test_optional_performance_metrics_remain_compatible_and_are_bounded() -> Non
 
   legacy.pop("traffic_light_state", None)
   legacy.pop("traffic_light_confidence", None)
+  for field in ("scene_mode", "scene_brightness", "effective_fps", "performance_mode"):
+    legacy.pop(field, None)
   parsed = parse_external_ai_result(encode(legacy), now_monotonic_ns=NOW_NS)
   assert parsed.traffic_light_state == "unknown"
   assert parsed.traffic_light_confidence == 0.0
+  assert parsed.scene_mode == "day"
+  assert parsed.performance_mode == "normal"
 
   with pytest.raises(ExternalAIProtocolError, match="runtime_ms"):
     parse_external_ai_result(encode(valid_result(runtime_ms=60_001.0)), now_monotonic_ns=NOW_NS)
