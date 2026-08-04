@@ -22,6 +22,8 @@ from onnxruntime.quantization.execution_providers.qnn import get_qnn_qdq_config,
 from onnxruntime.tools.make_dynamic_shape_fixed import fix_output_shapes, make_input_shape_fixed
 from PIL import Image
 
+from extract_qnn_raw_head_models import extract_model as extract_raw_head_model
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -144,11 +146,57 @@ def validate_model(static_model: Path, quantized_model: Path, image_path: Path, 
   return {"input_shape": expected_shape, "operator_types": operator_types, "outputs": comparisons}
 
 
+def decode_raw_head(raw_output: np.ndarray, size: int) -> np.ndarray:
+  if raw_output.shape != (1, 144, sum((size // stride) ** 2 for stride in (8, 16, 32))):
+    raise ValueError(f"unexpected raw-head shape: {raw_output.shape}")
+  distributions = raw_output[:, :64].reshape(1, 4, 16, -1)
+  distributions -= distributions.max(axis=2, keepdims=True)
+  probabilities = np.exp(distributions)
+  probabilities /= probabilities.sum(axis=2, keepdims=True)
+  distances = (probabilities * np.arange(16, dtype=np.float32).reshape(1, 1, 16, 1)).sum(axis=2)
+  class_scores = 1.0 / (1.0 + np.exp(-np.clip(raw_output[:, 64:], -80.0, 80.0)))
+
+  anchors = []
+  strides = []
+  for stride in (8, 16, 32):
+    grid = size // stride
+    grid_y, grid_x = np.meshgrid(
+      np.arange(grid, dtype=np.float32) + 0.5,
+      np.arange(grid, dtype=np.float32) + 0.5,
+      indexing="ij",
+    )
+    anchors.append(np.stack((grid_x.ravel(), grid_y.ravel())))
+    strides.append(np.full((1, grid * grid), stride, dtype=np.float32))
+  anchor_points = np.concatenate(anchors, axis=1)[None]
+  stride_values = np.concatenate(strides, axis=1)[None]
+  top_left = (anchor_points - distances[:, :2]) * stride_values
+  bottom_right = (anchor_points + distances[:, 2:]) * stride_values
+  boxes = np.concatenate(((top_left + bottom_right) / 2.0, bottom_right - top_left), axis=1)
+  return np.concatenate((boxes, class_scores), axis=1)
+
+
+def validate_raw_head(decoded_model: Path, raw_model: Path, image_path: Path, size: int) -> dict[str, float]:
+  providers = ["CPUExecutionProvider"]
+  decoded_session = ort.InferenceSession(str(decoded_model), providers=providers)
+  raw_session = ort.InferenceSession(str(raw_model), providers=providers)
+  tensor = image_tensor(image_path, size)
+  decoded = decoded_session.run(None, {decoded_session.get_inputs()[0].name: tensor})[0]
+  raw = raw_session.run(None, {raw_session.get_inputs()[0].name: tensor})[0]
+  rebuilt = decode_raw_head(raw, size)
+  delta = decoded - rebuilt
+  max_abs_error = float(np.max(np.abs(delta)))
+  rmse = float(np.sqrt(np.mean(np.square(delta))))
+  if max_abs_error >= 0.1 or rmse >= 0.02:
+    raise ValueError(f"raw-head decode mismatch: max={max_abs_error}, rmse={rmse}")
+  return {"max_abs_error": max_abs_error, "rmse": rmse}
+
+
 def build_model(source: Path, calibration_images: list[Path], output_dir: Path, size: int) -> dict[str, object]:
   output_dir.mkdir(parents=True, exist_ok=True)
   static_model = output_dir / f"yolo11n-static-{size}-fp32.onnx"
   preprocessed_model = output_dir / f"yolo11n-static-{size}-qnn-preprocessed.onnx"
-  quantized_model = output_dir / f"yolo11n-static-{size}-w8a16-qdq.onnx"
+  decoded_quantized_model = output_dir / f"yolo11n-static-{size}-w8a16-decoded-qdq.onnx"
+  quantized_model = output_dir / f"yolo11n-static-{size}-w8a16-raw-head-qdq.onnx"
 
   input_name = make_static_model(source, static_model, size)
   changed = qnn_preprocess_model(static_model, preprocessed_model)
@@ -162,11 +210,14 @@ def build_model(source: Path, calibration_images: list[Path], output_dir: Path, 
     per_channel=False,
     calibration_providers=["CPUExecutionProvider"],
   )
-  quantize(model_to_quantize, quantized_model, config)
-  validation = validate_model(model_to_quantize, quantized_model, calibration_images[0], size)
+  quantize(model_to_quantize, decoded_quantized_model, config)
+  validation = validate_model(model_to_quantize, decoded_quantized_model, calibration_images[0], size)
+  raw_head = extract_raw_head_model(decoded_quantized_model, quantized_model)
+  raw_head_validation = validate_raw_head(decoded_quantized_model, quantized_model, calibration_images[0], size)
 
   static_model.unlink(missing_ok=True)
   preprocessed_model.unlink(missing_ok=True)
+  decoded_quantized_model.unlink(missing_ok=True)
   return {
     "file": quantized_model.name,
     "size": quantized_model.stat().st_size,
@@ -176,6 +227,12 @@ def build_model(source: Path, calibration_images: list[Path], output_dir: Path, 
     "weight_type": "QUInt8",
     "calibration_images": len(calibration_images),
     "validation": validation,
+    "raw_head": {
+      "output_name": raw_head["output_name"],
+      "output_shape": raw_head["output_shape"],
+      "removed_nodes": raw_head["removed_nodes"],
+      **raw_head_validation,
+    },
   }
 
 

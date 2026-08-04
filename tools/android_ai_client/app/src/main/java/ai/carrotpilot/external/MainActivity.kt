@@ -443,19 +443,19 @@ class MainActivity : Activity() {
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
 
     addView(card().apply {
-      addView(sectionTitle("가속 우선순위"))
+      addView(sectionTitle("가속 자동 선택"))
       addView(label(if (BuildConfig.QNN_EP_INCLUDED) {
-        "Qualcomm QNN/HTP 전체 그래프 → QNN+CPU 혼합 → NNAPI → CPU"
+        "QNN/HTP 전체 그래프 · 검증된 QNN+CPU · NNAPI · CPU를 동일 입력으로 비교"
       } else {
-        "NNAPI → CPU · QNN/HTP 런타임 미포함"
+        "NNAPI와 CPU를 동일 입력으로 비교 · QNN/HTP 런타임 미포함"
       }, 14f, if (BuildConfig.QNN_EP_INCLUDED) COLOR_GREEN else COLOR_MUTED).apply { setPadding(0, dp(7), 0, 0) })
-      addView(label("QNN/HTP 또는 CPU를 제외한 NNAPI 가속 세션이 동작하면 배지는 eNPU로 통일됩니다.", 12f, COLOR_MUTED).apply {
+      addView(label("p95가 CPU보다 10% 이상 빠르고 p50도 느리지 않은 가속기만 자동 선택합니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(8), 0, 0)
       })
-      addView(label("전체 QNN, QNN+CPU 혼합, QNN 검증 보류, NNAPI 구분은 가속 진단 상세 문구에 계속 표시됩니다.", 12f, COLOR_MUTED).apply {
+      addView(label("HTP 실행이 확인되지 않은 QNN 혼합 세션은 제외하며, 선택 결과와 p50/p95는 가속 진단에 표시됩니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(6), 0, 0)
       })
-      addView(label("C3X가 없어도 세션 시작 즉시 더미 입력으로 사전 점검하며, SoC와 실패 원문을 가속 진단에 유지합니다.", 12f, COLOR_MUTED).apply {
+      addView(label("C3X가 없어도 세션 시작 즉시 동일한 더미 입력으로 비교하며, SoC와 실패 원문을 유지합니다.", 12f, COLOR_MUTED).apply {
         setPadding(0, dp(6), 0, 0)
       })
     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -762,13 +762,23 @@ class MainActivity : Activity() {
     inputSize.setText(preferences.getInt(KEY_INPUT_SIZE, 320).toString())
     autoConnect.isChecked = preferences.getBoolean(KEY_AUTO_CONNECT, true)
     val storedUri = preferences.getString(KEY_MODEL_URI, null)?.let(Uri::parse)
+    val legacyReplacement = RecommendedModels.replacementForLegacyUri(storedUri)
+    if (legacyReplacement != null) selectedCatalogModel = legacyReplacement
     modelUri = when {
+      legacyReplacement != null && RecommendedModels.isInstalled(this, legacyReplacement) ->
+        Uri.fromFile(RecommendedModels.installedFile(this, legacyReplacement))
+      legacyReplacement != null -> null
       storedUri?.scheme == "file" && storedUri.path?.let(::File)?.isFile == true -> storedUri
       storedUri != null && storedUri.scheme != "file" -> storedUri
       RecommendedModels.firstInstalled(this) != null -> RecommendedModels.firstInstalled(this)?.let {
         Uri.fromFile(RecommendedModels.installedFile(this, it))
       }
       else -> null
+    }
+    if (legacyReplacement != null) {
+      preferences.edit().apply {
+        if (modelUri == null) remove(KEY_MODEL_URI) else putString(KEY_MODEL_URI, modelUri.toString())
+      }.apply()
     }
     RecommendedModels.findByUri(this, modelUri)?.let { activeModel ->
       selectedCatalogModel = activeModel

@@ -37,7 +37,7 @@ data class VerifiedModelSpec(
 }
 
 object RecommendedModels {
-  const val VERSION = "CarrotPilot QDQ v1 / Ultralytics assets v8.4.0"
+  const val VERSION = "CarrotPilot raw-head QDQ v2 / Ultralytics assets v8.4.0"
   const val LICENSE_URL = "https://www.ultralytics.com/license"
 
   val YOLO11N_QDQ_320 = VerifiedModelSpec(
@@ -46,11 +46,11 @@ object RecommendedModels {
     profileLabel = "NPU 속도 권장",
     map5095 = null,
     suggestedSettings = "고정 입력 320 · 목표 10~15 FPS",
-    formatLabel = "Static QDQ · W8A16 · QNN/HTP 우선",
-    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-320-w8a16-qdq.onnx",
-    expectedSize = 3_047_718L,
-    expectedSha256 = "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
-    fileName = "yolo11n-static-320-w8a16-qdq.onnx",
+    formatLabel = "Static raw-head QDQ · W8A16 · QNN/HTP 우선",
+    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-320-w8a16-raw-head-qdq.onnx",
+    expectedSize = 3_064_576L,
+    expectedSha256 = "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
+    fileName = "yolo11n-static-320-w8a16-raw-head-qdq.onnx",
     fixedInputSize = 320,
     qnnOptimized = true,
   )
@@ -61,11 +61,11 @@ object RecommendedModels {
     profileLabel = "NPU 고화질",
     map5095 = null,
     suggestedSettings = "고정 입력 640 · 목표 5~10 FPS",
-    formatLabel = "Static QDQ · W8A16 · QNN/HTP 우선",
-    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-640-w8a16-qdq.onnx",
-    expectedSize = 3_085_627L,
-    expectedSha256 = "b4bdd62de9f07e9b29fd08f3482719d650c853cdfa7230e589770105361259fd",
-    fileName = "yolo11n-static-640-w8a16-qdq.onnx",
+    formatLabel = "Static raw-head QDQ · W8A16 · QNN/HTP 우선",
+    downloadUrl = "https://media.githubusercontent.com/media/junghc11/openpilot/external-android-ai/tools/android_ai_client/models/yolo11n-static-640-w8a16-raw-head-qdq.onnx",
+    expectedSize = 3_064_734L,
+    expectedSha256 = "156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74",
+    fileName = "yolo11n-static-640-w8a16-raw-head-qdq.onnx",
     fixedInputSize = 640,
     qnnOptimized = true,
   )
@@ -112,6 +112,11 @@ object RecommendedModels {
   val ALL = listOf(YOLO11N_QDQ_320, YOLO11N_QDQ_640, YOLO11N, YOLO11S, YOLO11M)
   val DEFAULT = YOLO11N_QDQ_320
 
+  private val LEGACY_QDQ_REPLACEMENTS = mapOf(
+    "yolo11n-static-320-w8a16-qdq.onnx" to YOLO11N_QDQ_320,
+    "yolo11n-static-640-w8a16-qdq.onnx" to YOLO11N_QDQ_640,
+  )
+
   fun installedFile(context: Context, model: VerifiedModelSpec): File =
     File(File(context.filesDir, "models"), model.fileName)
 
@@ -126,6 +131,9 @@ object RecommendedModels {
     if (uri?.scheme != "file") return null
     return ALL.firstOrNull { uri.path == installedFile(context, it).absolutePath }
   }
+
+  fun replacementForLegacyUri(uri: Uri?): VerifiedModelSpec? =
+    LEGACY_QDQ_REPLACEMENTS[uri?.lastPathSegment]
 
   fun delete(context: Context, model: VerifiedModelSpec): Boolean {
     val file = installedFile(context, model)

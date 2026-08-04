@@ -9,14 +9,14 @@ v0.10.0부터 밝은 카드형 화면과 **상태·모델·로그** 탭을 사�
 ## 지원 환경과 모델
 
 - Android 10(API 29) 이상 64비트 ARM(`arm64-v8a`) 스마트폰
-- Qualcomm QNN/HTP 전체 그래프 우선 실행, NNAPI와 CPU 순서의 자동 폴백
+- QNN/HTP·검증된 QNN+CPU·NNAPI·CPU를 동일 입력으로 사전 측정하고 성능이 좋은 백엔드를 자동 선택
 - Float32 NCHW 그래프 입출력. QNN 모델은 정적 320 또는 640, CPU 호환 모델은 동적 320·416·640
-- 표준 Ultralytics YOLOv8/YOLO11 출력 `[1, 84, N]` 또는 `[1, N, 84]`
+- 표준 Ultralytics YOLOv8/YOLO11 출력 `[1, 84, N]`·`[1, N, 84]` 및 내장 QDQ 모델의 raw head `[1, 144, N]`
 - person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign COCO 클래스
 
-NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. v0.10.0 기본 APK는 공식 ONNX Runtime QNN AAR과 Qualcomm QNN Runtime을 포함합니다. 먼저 HTP에서 전체 그래프를 열고, 한 연산이라도 CPU가 필요하면 `session.disable_cpu_ep_fallback=1`에 의해 QNN 세션을 거부한 뒤 NNAPI, 마지막으로 CPU 순서로 폴백합니다. NNAPI 세션은 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. NNAPI가 선택되면 지원되는 그래프가 NPU·DSP·GPU와 ORT CPU에 혼합 배치될 수 있습니다.
+NMS를 모델 안에서 끝내고 `[1, N, 6]`을 반환하는 내보내기 형식은 아직 지원하지 않습니다. v0.13.0 기본 APK는 공식 ONNX Runtime QNN AAR과 Qualcomm QNN Runtime을 포함합니다. 먼저 `session.disable_cpu_ep_fallback=1`로 HTP 전체 그래프를 확인하고, 실패하면 프로파일에서 실제 HTP 실행이 확인된 QNN+CPU 혼합 세션만 후보로 유지합니다. NNAPI는 FP16을 허용하고 느릴 수 있는 NCHW 강제 옵션과 NNAPI CPU는 사용하지 않습니다. 사용 가능한 후보와 ORT CPU를 동일 입력으로 예열 2회·측정 7회 실행하며, 가속기 p95가 CPU보다 10% 이상 빠르고 p50도 느리지 않을 때만 가속기를 선택합니다.
 
-YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 `YOLO11n NPU W8A16 · 320`**입니다. 공식 YOLO11n을 고정 shape로 단순화하고 COCO128 128장으로 QDQ 양자화했으며, float32 입출력과 모델 밖 NMS를 유지합니다. CPU ONNX 출력 검증은 완료했지만 실제 HTP 전체 그래프 배치와 양자화 정확도는 실기 검증 중입니다.
+YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 `YOLO11n NPU W8A16 · 320`**입니다. 공식 YOLO11n을 고정 shape로 단순화하고 COCO128 128장으로 QDQ 양자화한 뒤 DFL·앵커·sigmoid 후처리 57개 노드를 모델 밖 Kotlin 코드로 이동했습니다. NPU 그래프는 `[1,144,N]` raw head를 반환하며 앱이 기존 `[1,84,N]` 형식으로 복원해 NMS를 수행합니다. CPU 출력 비교는 완료했지만 실제 HTP 전체 그래프 배치와 양자화 정확도는 실기 검증 중입니다.
 
 | 모델 | 용도 | 정확도 | 다운로드 | 첫 시험값 |
 |---|---|---:|---:|---|
@@ -28,7 +28,7 @@ YOLO 모델은 APK에 포함하지 않습니다. **첫 시험 권장 모델은 `
 
 입력 픽셀 수는 320이 640의 1/4이므로 먼저 NPU 320에서 지속 성능과 발열을 확인하세요. 두 NPU 모델은 QUInt16 activation·QUInt8 weight QDQ 그래프이며 고정 입력 크기를 앱이 자동 적용합니다. Dynamic FP32 세 모델은 QNN을 시도하지 않는 CPU/NNAPI 호환 경로입니다. YOLO11l/x, YOLOv8 또는 직접 학습한 호환 모델도 수동 선택할 수 있지만 성능·출력 형식은 별도 검증이 필요합니다. YOLO26 end-to-end, segmentation, pose, classification, OBB 모델은 현재 지원하지 않습니다.
 
-앱의 **권장 모델 다운로드**는 파일 크기·SHA-256·ONNX 입출력을 검증합니다. NPU 320은 `3,047,718`바이트와 SHA-256 `42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027`, NPU 640은 `3,085,627`바이트와 `b4bdd62de9f07e9b29fd08f3482719d650c853cdfa7230e589770105361259fd`입니다. Dynamic FP32 모델은 기존 공식 `ultralytics/assets` v8.4.0 파일과 고정 hash를 유지합니다. 임시 파일은 검증 실패·취소 시 삭제하며 다운로드가 성공해야 자동 연결에 사용합니다. 모델은 개별 삭제할 수 있고 앱 삭제 시 모두 제거됩니다.
+앱의 **권장 모델 다운로드**는 파일 크기·SHA-256·ONNX 입출력을 검증합니다. raw-head NPU 320은 `3,064,576`바이트와 SHA-256 `6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8`, NPU 640은 `3,064,734`바이트와 `156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74`입니다. Dynamic FP32 모델은 기존 공식 `ultralytics/assets` v8.4.0 파일과 고정 hash를 유지합니다. 임시 파일은 검증 실패·취소 시 삭제하며 다운로드가 성공해야 자동 연결에 사용합니다. 모델은 개별 삭제할 수 있고 앱 삭제 시 모두 제거됩니다.
 
 인터넷이 없거나 다른 호환 모델을 시험할 때는 **다른 ONNX 파일 선택**을 사용합니다. PC에서 권장 형식을 직접 만들려면 `nms=False`와 `dynamic=False`를 유지합니다.
 
@@ -50,7 +50,7 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 UI만 Android x86_64 에뮬레이터에서 확인할 때는 `-PcarrotQnnEnabled=false -PcarrotTargetAbi=x86_64`를 함께 지정합니다. 실제 배포 APK는 옵션 없이 빌드하여 기본 `arm64-v8a`와 QNN Runtime을 유지합니다.
 
-기본 빌드는 ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), QNN Runtime 2.48.0을 APK에 포함합니다. 먼저 `session.disable_cpu_ep_fallback=1`로 전체 HTP 그래프를 검사하고, 실패하면 QNN+CPU 혼합 세션을 열어 ORT 프로파일에서 실제 QNN 노드 실행을 확인합니다. 앱의 가속 진단에는 SoC와 전체 그래프·혼합 실행 실패 원문이 C3X 검색 상태와 별도로 유지됩니다. QNN 네이티브 라이브러리를 APK 안에서는 압축하고 설치 시 꺼내므로 설치 공간은 APK보다 더 많이 필요할 수 있습니다. APK 크기를 줄인 NNAPI·CPU 전용 시험 빌드는 다음처럼 만듭니다.
+기본 빌드는 ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), QNN Runtime 2.48.0을 APK에 포함합니다. 전체 HTP 그래프와 프로파일로 확인된 QNN+CPU만 NPU 후보가 되며, HTP 실행 증거가 없는 혼합 세션은 자동 제외됩니다. 가속 진단에는 SoC, 각 후보의 p50/p95, 자동 선택 결과와 실패 원문이 C3X 검색 상태와 별도로 유지됩니다. QNN 네이티브 라이브러리를 APK 안에서는 압축하고 설치 시 꺼내므로 설치 공간은 APK보다 더 많이 필요할 수 있습니다. APK 크기를 줄인 NNAPI·CPU 전용 시험 빌드는 다음처럼 만듭니다.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false
@@ -90,7 +90,7 @@ Android 13 이상에서는 알림 권한을 요청합니다. Android 12 이상�
 
 NPU 모델의 **YOLO 입력 크기**는 각각 320 또는 640으로 자동 고정되며 목표 추론률은 1~20 FPS에서 선택합니다. 먼저 NPU 320·5FPS로 15분 이상 실행한 뒤 10~15FPS로 올리세요. 중앙 HUD의 `VIDEO FPS`는 C3X 원본 프레임 타임스탬프로 계산한 영상률, `AI FPS`는 현재 모델의 실측 처리율, `추종률`은 AI FPS/VIDEO FPS, `SKIP/s`는 두 속도의 차이입니다. 따라서 스마트폰 처리 루프가 느려져도 추종률이 100%로 잘못 보이지 않습니다. 객체 콘솔에는 시각, 프레임 ID, 객체명, 신뢰도, 원본 영상 기준 box와 center 픽셀 좌표가 최근 40개 분석 단위로 표시됩니다. 객체명은 Android 시스템 언어가 한국어이면 한글과 COCO 원문을 함께, 그 외 언어이면 COCO 영문으로 표시합니다.
 
-상태 화면은 최근 120개 처리 표본의 전화 처리 평균과 p95, 현재 H.264/JPEG 디코딩·전처리·ORT 런타임·후처리 평균, 배터리 온도와 Android 열 상태를 구분해 표시합니다. C3X 상태에는 선택 입력 크기와 `총 지연/AI 처리시간`이 표시됩니다. Qualcomm QNN/HTP 전체·혼합 세션 또는 CPU를 제외한 NNAPI 가속 세션이 동작하면 초록색 `eNPU`, CPU 폴백이면 보라색 `eCPU`로 표시합니다. 배지는 NPU 가속 환경을 간단히 나타내며, 전체 QNN·QNN+CPU 혼합·QNN 검증 보류·NNAPI 구분과 프로파일 증거는 가속 진단 상세 문구에서 확인합니다. `QNN 폴백` 문구가 보이면 뒤의 원인과 처리시간을 함께 기록하세요.
+상태 화면은 최근 120개 처리 표본의 전화 처리 평균과 p95, 현재 H.264/JPEG 디코딩·전처리·ORT 런타임·후처리 평균, 배터리 온도와 Android 열 상태를 구분해 표시합니다. C3X 상태에는 선택 입력 크기와 `총 지연/AI 처리시간`이 표시됩니다. 자동 비교에서 선택된 Qualcomm QNN/HTP·검증된 QNN+CPU·NNAPI는 초록색 `eNPU`, CPU는 보라색 `eCPU`로 표시합니다. 가속 진단 상세 문구에는 백엔드별 사전 p50/p95, 자동 선택 결과, QNN 프로파일 증거와 실패 원문이 남습니다.
 
 - `ORT`만 큰 경우: 모델·가속 백엔드 병목입니다. 320을 유지하고 CPU 폴백 여부를 확인합니다.
 - `총 지연 - 전화 처리`가 큰 경우: C3X 인코딩, Wi-Fi 또는 반환 경로 병목입니다.
@@ -99,7 +99,7 @@ NPU 모델의 **YOLO 입력 크기**는 각각 320 또는 640으로 자동 고�
 
 ## 화면 꺼짐과 절전 동작
 
-- 기기를 찾기 전에는 YOLO 모델이나 NPU 세션을 열지 않고 Wake Lock과 고성능 Wi-Fi Lock도 사용하지 않습니다. 포그라운드 서비스의 검색 간격은 5·10·20초 뒤 최대 30초로 늘어나며, Android·제조사 절전 정책에 따라 화면이 꺼졌을 때 검색이 더 늦어질 수 있습니다.
+- 기기 검색 전에 YOLO 백엔드 자동 비교를 한 번 수행하지만 Wake Lock과 고성능 Wi-Fi Lock은 잡지 않습니다. 비교가 끝나면 선택하지 않은 세션은 즉시 닫습니다. 포그라운드 서비스의 검색 간격은 5·10·20초 뒤 최대 30초로 늘어나며, Android·제조사 절전 정책에 따라 화면이 꺼졌을 때 검색이 더 늦어질 수 있습니다.
 - 권장 모델 다운로드는 사용자가 버튼을 눌렀을 때만 실행하며 추론용 Wake Lock을 잡지 않습니다. 다운로드가 끝나고 기기 연결이 시작된 뒤에만 추론 성능 Lock을 사용합니다.
 - TCP 영상 연결 뒤에는 화면이 꺼져도 추론하도록 부분 Wake Lock과 고성능 Wi-Fi Lock을 사용합니다. 이는 절전 모드가 아니므로 충전과 발열 확인이 필요합니다.
 - 연결이 끊기면 두 성능 Lock을 즉시 해제합니다. 실패한 연결은 1·2·4·8·16초 뒤 재시도하고 이후 최대 30초로 제한하며, 주소가 바뀌었으면 같은 망을 다시 검색합니다.

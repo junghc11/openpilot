@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.EnumSet
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONArray
@@ -145,6 +146,10 @@ class YoloDetector(
       values.get(box * channels + channel)
     }
 
+    if (channels == RAW_HEAD_CHANNELS) {
+      return parseRawDflOutput(values, boxes, channelsFirst, prepared)
+    }
+
     val candidates = ArrayList<Detection>()
     for (box in 0 until boxes) {
       var bestClass = -1
@@ -178,6 +183,87 @@ class YoloDetector(
     return nonMaximumSuppression(candidates).take(64)
   }
 
+  private fun parseRawDflOutput(
+    values: FloatBuffer,
+    boxes: Int,
+    channelsFirst: Boolean,
+    prepared: PreparedInput,
+  ): List<Detection> {
+    fun value(box: Int, channel: Int): Float = if (channelsFirst) {
+      values.get(channel * boxes + box)
+    } else {
+      values.get(box * RAW_HEAD_CHANNELS + channel)
+    }
+
+    val expectedBoxes = DETECTION_STRIDES.sumOf { stride ->
+      (inputWidth / stride) * (inputHeight / stride)
+    }
+    require(boxes == expectedBoxes) {
+      "YOLO raw DFL anchor 수가 입력 크기와 맞지 않습니다: $boxes != $expectedBoxes"
+    }
+    val candidates = ArrayList<Detection>()
+    val distances = FloatArray(4)
+    for (box in 0 until boxes) {
+      var bestClass = -1
+      var bestScore = confidenceThreshold
+      for (classId in 0 until COCO_CLASS_COUNT) {
+        val score = sigmoid(value(box, DFL_BOX_CHANNELS + classId))
+        if (score > bestScore) {
+          bestScore = score
+          bestClass = classId
+        }
+      }
+      val className = supportedClasses[bestClass] ?: continue
+
+      for (side in 0 until 4) {
+        val channelOffset = side * DFL_BINS
+        var maxLogit = Float.NEGATIVE_INFINITY
+        for (bin in 0 until DFL_BINS) {
+          maxLogit = max(maxLogit, value(box, channelOffset + bin))
+        }
+        var weighted = 0.0
+        var total = 0.0
+        for (bin in 0 until DFL_BINS) {
+          val probability = exp((value(box, channelOffset + bin) - maxLogit).toDouble())
+          weighted += probability * bin
+          total += probability
+        }
+        distances[side] = (weighted / total).toFloat()
+      }
+
+      var localIndex = box
+      var stride = 0
+      var gridWidth = 0
+      for (candidateStride in DETECTION_STRIDES) {
+        val candidateWidth = inputWidth / candidateStride
+        val candidateHeight = inputHeight / candidateStride
+        val count = candidateWidth * candidateHeight
+        if (localIndex < count) {
+          stride = candidateStride
+          gridWidth = candidateWidth
+          break
+        }
+        localIndex -= count
+      }
+      check(stride > 0 && gridWidth > 0) { "YOLO raw DFL anchor index를 해석할 수 없습니다: $box" }
+      val anchorX = localIndex % gridWidth + 0.5f
+      val anchorY = localIndex / gridWidth + 0.5f
+      val inputX1 = (anchorX - distances[0]) * stride
+      val inputY1 = (anchorY - distances[1]) * stride
+      val inputX2 = (anchorX + distances[2]) * stride
+      val inputY2 = (anchorY + distances[3]) * stride
+      val x1 = ((inputX1 - prepared.padX) / prepared.scale / prepared.sourceWidth).coerceIn(0f, 1f)
+      val y1 = ((inputY1 - prepared.padY) / prepared.scale / prepared.sourceHeight).coerceIn(0f, 1f)
+      val x2 = ((inputX2 - prepared.padX) / prepared.scale / prepared.sourceWidth).coerceIn(0f, 1f)
+      val y2 = ((inputY2 - prepared.padY) / prepared.scale / prepared.sourceHeight).coerceIn(0f, 1f)
+      if (x2 - x1 < 0.002f || y2 - y1 < 0.002f) continue
+      candidates += Detection(bestClass, className, bestScore, x1, y1, x2, y2)
+    }
+    return nonMaximumSuppression(candidates).take(64)
+  }
+
+  private fun sigmoid(value: Float): Float = (1.0 / (1.0 + exp(-value.coerceIn(-80f, 80f).toDouble()))).toFloat()
+
   private fun nonMaximumSuppression(candidates: List<Detection>): List<Detection> {
     val selected = ArrayList<Detection>()
     candidates.sortedByDescending { it.confidence }.take(512).forEach { candidate ->
@@ -203,13 +289,20 @@ class YoloDetector(
   }
 
   private fun createPreferredSession(modelFile: File): SessionSetup {
+    val candidates = mutableListOf<SessionSetup>()
+    val diagnostics = mutableListOf<String>()
+    var lastError: Throwable? = null
     val strictQnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) {
       tryCreateQnnSession(modelFile, requireFullGraph = true)
     } else {
       null
     }
-    strictQnnAttempt?.setup?.let { return it }
-    val mixedQnnAttempt = if (BuildConfig.QNN_EP_INCLUDED && tryQnn) {
+    strictQnnAttempt?.setup?.let(candidates::add)
+    strictQnnAttempt?.error?.let { error ->
+      lastError = error
+      diagnostics += qnnErrorLabel("전체 그래프", error)
+    }
+    val mixedQnnAttempt = if (strictQnnAttempt?.setup == null && BuildConfig.QNN_EP_INCLUDED && tryQnn) {
       tryCreateQnnSession(
         modelFile,
         requireFullGraph = false,
@@ -218,14 +311,21 @@ class YoloDetector(
     } else {
       null
     }
-    mixedQnnAttempt?.setup?.let { return it }
-    val qnnFallback = when {
-      !tryQnn -> qnnSkipReason.ifBlank { "QNN 건너뜀: CPU 호환 모델" }
-      !BuildConfig.QNN_EP_INCLUDED -> "QNN EP 미포함 빌드"
-      else -> listOfNotNull(
-        strictQnnAttempt?.error?.let { qnnErrorLabel("전체 그래프", it) },
-        mixedQnnAttempt?.error?.let { qnnErrorLabel("혼합 실행", it) },
-      ).joinToString("\n")
+    mixedQnnAttempt?.setup?.let { setup ->
+      if (setup.backend == "onnxruntime-qnn-mixed-unverified") {
+        diagnostics += "QNN 혼합 실행 제외: HTP 실행 증거 없음"
+        setup.close()
+      } else {
+        candidates += setup
+      }
+    }
+    mixedQnnAttempt?.error?.let { error ->
+      lastError = error
+      diagnostics += qnnErrorLabel("혼합 실행", error)
+    }
+    when {
+      !tryQnn -> diagnostics += qnnSkipReason.ifBlank { "QNN 건너뜀: CPU 호환 모델" }
+      !BuildConfig.QNN_EP_INCLUDED -> diagnostics += "QNN EP 미포함 빌드"
     }
 
     val nnapiOptions = createBaseOptions()
@@ -234,38 +334,34 @@ class YoloDetector(
         NNAPIFlags.CPU_DISABLED,
         NNAPIFlags.USE_FP16,
       ))
-      return SessionSetup(
+      candidates += SessionSetup(
         options = nnapiOptions,
         session = createAndWarmSession(modelFile, nnapiOptions),
         backend = "onnxruntime-nnapi",
-        backendLabel = listOf("NNAPI 가속 요청(NPU/DSP/GPU · 혼합 실행 가능)", qnnFallback)
-          .filter(String::isNotBlank)
-          .joinToString(" · "),
+        backendLabel = "NNAPI 가속 요청(NPU/DSP/GPU · ORT CPU 혼합 가능)",
       )
     } catch (nnapiError: Exception) {
       nnapiOptions.close()
-      val cpuOptions = createBaseOptions()
-      try {
-        return SessionSetup(
-          options = cpuOptions,
-          session = createAndWarmSession(modelFile, cpuOptions),
-          backend = "onnxruntime-cpu-fallback",
-          backendLabel = listOf(
-            "ONNX Runtime CPU",
-            "NNAPI 폴백: ${shortError(nnapiError)}",
-            qnnFallback,
-          )
-            .filter(String::isNotBlank)
-            .joinToString(" · "),
-        )
-      } catch (cpuError: Exception) {
-        cpuOptions.close()
-        cpuError.addSuppressed(nnapiError)
-        strictQnnAttempt?.error?.let(cpuError::addSuppressed)
-        mixedQnnAttempt?.error?.let(cpuError::addSuppressed)
-        throw cpuError
-      }
+      lastError = nnapiError
+      diagnostics += "NNAPI 실패: ${shortError(nnapiError)}"
     }
+
+    val cpuOptions = createBaseOptions()
+    try {
+      candidates += SessionSetup(
+        options = cpuOptions,
+        session = createAndWarmSession(modelFile, cpuOptions),
+        backend = "onnxruntime-cpu-fallback",
+        backendLabel = "ONNX Runtime CPU",
+      )
+    } catch (cpuError: Exception) {
+      cpuOptions.close()
+      lastError?.let(cpuError::addSuppressed)
+      lastError = cpuError
+      diagnostics += "CPU 세션 실패: ${shortError(cpuError)}"
+    }
+    if (candidates.isEmpty()) throw IllegalStateException("사용 가능한 YOLO 실행 백엔드가 없습니다.", lastError)
+    return selectBestSession(candidates, diagnostics)
   }
 
   private fun tryCreateQnnSession(
@@ -478,6 +574,93 @@ class YoloDetector(
     }
   }
 
+  private fun selectBestSession(
+    candidates: List<SessionSetup>,
+    diagnostics: List<String>,
+  ): SessionSetup {
+    val benchmarked = candidates.mapNotNull { setup ->
+      try {
+        SessionBenchmark(setup, benchmarkSession(setup.session))
+      } catch (error: Throwable) {
+        Log.w(TAG, "${setup.backend} benchmark failed: ${diagnosticError(error)}")
+        setup.close()
+        null
+      }
+    }
+    check(benchmarked.isNotEmpty()) { "모든 YOLO 백엔드 벤치마크가 실패했습니다." }
+
+    val cpu = benchmarked.firstOrNull { it.setup.backend == "onnxruntime-cpu-fallback" }
+    val fastestAccelerator = benchmarked
+      .filter { it.setup.backend != "onnxruntime-cpu-fallback" }
+      .minWithOrNull(compareBy<SessionBenchmark> { it.timing.p95Ms }.thenBy { it.timing.p50Ms })
+    val selected = when {
+      cpu == null -> fastestAccelerator ?: benchmarked.minBy { it.timing.p95Ms }
+      fastestAccelerator != null && BackendAutoSelector.shouldUseAccelerator(fastestAccelerator.timing, cpu.timing) -> {
+        fastestAccelerator
+      }
+      else -> cpu
+    }
+
+    benchmarked.filter { it !== selected }.forEach { it.setup.close() }
+    val timingSummary = benchmarked.joinToString(" · ") { result ->
+      "${backendShortName(result.setup.backend)} ${result.timing.compactLabel()}"
+    }
+    val decision = if (selected.setup.backend == "onnxruntime-cpu-fallback" && fastestAccelerator != null) {
+      "CPU 자동 선택(가속기 p95 개선 10% 미만)"
+    } else {
+      "${backendShortName(selected.setup.backend)} 자동 선택"
+    }
+    val diagnosticSummary = diagnostics.take(3).joinToString(" · ")
+    return selected.setup.copy(
+      backendLabel = listOf(
+        selected.setup.backendLabel,
+        "사전 벤치마크 p50/p95 $timingSummary",
+        decision,
+        diagnosticSummary,
+      ).filter(String::isNotBlank).joinToString(" · "),
+    )
+  }
+
+  private fun benchmarkSession(candidate: OrtSession): BackendTiming {
+    val candidateInputName = candidate.inputNames.first()
+    val candidateShape = (candidate.inputInfo[candidateInputName]?.info as? TensorInfo)?.shape
+      ?: error("YOLO 입력 텐서 정보를 읽을 수 없습니다.")
+    val height = candidateShape.getOrNull(2)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
+    val width = candidateShape.getOrNull(3)?.takeIf { it > 0 }?.toInt() ?: dynamicInputSize
+    val elementCount = width * height * 3
+    val buffer = ByteBuffer.allocateDirect(elementCount * Float.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder())
+      .asFloatBuffer()
+    for (index in 0 until elementCount) {
+      buffer.put(index, ((index * 37) % 255) / 255f)
+    }
+    buffer.rewind()
+    val samples = ArrayList<Double>(BENCHMARK_RUNS)
+    OnnxTensor.createTensor(
+      environment,
+      buffer,
+      longArrayOf(1, 3, height.toLong(), width.toLong()),
+    ).use { input ->
+      repeat(BENCHMARK_WARMUP_RUNS) {
+        candidate.run(mapOf(candidateInputName to input)).use { }
+      }
+      repeat(BENCHMARK_RUNS) {
+        val startedNs = SystemClock.elapsedRealtimeNanos()
+        candidate.run(mapOf(candidateInputName to input)).use { }
+        samples += nanosToMillis(SystemClock.elapsedRealtimeNanos() - startedNs)
+      }
+    }
+    return BackendAutoSelector.summarize(samples)
+  }
+
+  private fun backendShortName(backend: String): String = when (backend) {
+    "onnxruntime-qnn" -> "QNN"
+    "onnxruntime-qnn-mixed" -> "QNN+CPU"
+    "onnxruntime-nnapi" -> "NNAPI"
+    "onnxruntime-cpu-fallback" -> "CPU"
+    else -> backend
+  }
+
   private fun createBaseOptions() = OrtSession.SessionOptions().apply {
     setIntraOpNumThreads(max(1, Runtime.getRuntime().availableProcessors() / 2))
   }
@@ -520,6 +703,16 @@ class YoloDetector(
     val session: OrtSession,
     val backend: String,
     val backendLabel: String,
+  ) {
+    fun close() {
+      session.close()
+      options.close()
+    }
+  }
+
+  private data class SessionBenchmark(
+    val setup: SessionSetup,
+    val timing: BackendTiming,
   )
 
   private data class QnnAttempt(
@@ -544,6 +737,13 @@ class YoloDetector(
     private const val CPU_EP_NAME = "CPUExecutionProvider"
     private const val QNN_PLUGIN_LIBRARY = "libonnxruntime_providers_qnn.so"
     private const val QNN_STACK_LABEL = "ORT 1.26.0 · QNN EP 2.4.0 · QAIRT 2.48.0"
+    private const val BENCHMARK_WARMUP_RUNS = 2
+    private const val BENCHMARK_RUNS = 7
+    private const val DFL_BINS = 16
+    private const val DFL_BOX_CHANNELS = 4 * DFL_BINS
+    private const val COCO_CLASS_COUNT = 80
+    private const val RAW_HEAD_CHANNELS = DFL_BOX_CHANNELS + COCO_CLASS_COUNT
+    private val DETECTION_STRIDES = intArrayOf(8, 16, 32)
     private val QNN_REGISTRATION_LOCK = Any()
     @Volatile private var qnnPluginRegistered = false
     val SUPPORTED_INPUT_SIZES = setOf(320, 416, 640)

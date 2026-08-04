@@ -81,7 +81,7 @@ class ExternalAIService : Service() {
     var discoveryRetryDelayMs = MIN_DISCOVERY_RETRY_DELAY_MS
     var detector: YoloDetector? = null
     try {
-      updateStatus("C3X 연결 전 AI 가속 사전 점검 중\n더미 입력으로 모델 세션 예열")
+      updateStatus("C3X 연결 전 AI 가속 자동 선택 중\n동일 입력으로 QNN·NNAPI·CPU 비교")
       detector = YoloDetector(
         copyModelToCache(config.modelUri),
         config.threshold,
@@ -102,8 +102,8 @@ class ExternalAIService : Service() {
       )
       val preflightSummary = "기기 ${deviceSummary()}\n${detector.backendLabel}"
       updateStatus(
-        "가속 사전 점검 완료: ${acceleratorBadge(detector.backend)}\n" +
-          "$preflightSummary\nC3X 연결 없이 더미 입력 예열로 확인",
+        "가속 자동 선택 완료: ${acceleratorBadge(detector.backend)}\n" +
+          "$preflightSummary\nC3X 연결 없이 동일 입력 p50/p95 비교",
       )
       val preflightBadge = acceleratorBadge(detector.backend)
       while (token.get()) {

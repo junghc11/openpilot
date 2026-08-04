@@ -9,14 +9,14 @@ Starting with v0.10.0, the app uses a bright card-based layout with **Status, Mo
 ## Supported environment and model
 
 - A 64-bit ARM (`arm64-v8a`) phone with Android 10 (API 29) or newer
-- Full-graph Qualcomm QNN/HTP first, then automatic NNAPI and CPU fallbacks
+- Identical-input preflight across full QNN/HTP, verified mixed QNN+CPU, NNAPI, and CPU with automatic backend selection
 - Float32 NCHW graph I/O; QNN models use static 320 or 640 while compatibility models allow dynamic 320, 416, or 640
-- Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`
+- Standard Ultralytics YOLOv8/YOLO11 output shaped `[1, 84, N]` or `[1, N, 84]`, plus the bundled-catalog QDQ raw head `[1, 144, N]`
 - COCO person, bicycle, car, motorcycle, bus, truck, traffic light, and stop sign classes
 
-Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.10.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It first tries the whole graph on HTP. If any operation would need CPU, `session.disable_cpu_ep_fallback=1` rejects that QNN session before the app falls back to NNAPI and finally CPU. The NNAPI session allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. When NNAPI is selected, supported partitions may run on the NPU, DSP, or GPU while other work can still use ORT CPU kernels.
+Exports that perform NMS inside the model and return `[1, N, 6]` are not supported yet. The v0.13.0 default APK includes the official ONNX Runtime QNN AAR and Qualcomm QNN Runtime. It verifies a full HTP graph with `session.disable_cpu_ep_fallback=1` and retains a mixed QNN+CPU candidate only when profiling observes actual HTP execution. NNAPI allows FP16, does not force the potentially slower NCHW option, and disables NNAPI CPU. Every usable candidate and ORT CPU run two warmups plus seven identical-input measurements. An accelerator is selected only when its p95 is at least 10% faster than CPU and its p50 is no slower.
 
-No YOLO model is bundled in the APK. **The recommended first-test model is `YOLO11n NPU W8A16 · 320`.** It fixes and simplifies the official YOLO11n graph, uses QDQ calibration from all 128 COCO128 images, and retains float32 I/O with NMS outside the graph. CPU ONNX structure/output validation passed; physical full-graph HTP placement and quantized accuracy still require device testing.
+No YOLO model is bundled in the APK. **The recommended first-test model is `YOLO11n NPU W8A16 · 320`.** It fixes and simplifies the official YOLO11n graph, uses QDQ calibration from all 128 COCO128 images, and moves 57 DFL, anchor, sigmoid, and decode nodes into Kotlin. The NPU graph returns a `[1,144,N]` raw head which the app reconstructs into the conventional `[1,84,N]` result before NMS. CPU output comparison passed; physical full-graph HTP placement and quantized accuracy still require device testing.
 
 | Model | Profile | Accuracy | Download | First-test setting |
 |---|---|---:|---:|---|
@@ -28,7 +28,7 @@ No YOLO model is bundled in the APK. **The recommended first-test model is `YOLO
 
 A 320 input has one quarter of the pixels of 640, so establish sustained performance and heat with NPU 320 first. The two NPU models use QUInt16 activations and QUInt8 weights in a QDQ graph, and the app applies their fixed input automatically. The three Dynamic FP32 entries are CPU/NNAPI compatibility paths and intentionally skip QNN. YOLO11l/x, YOLOv8, or a compatible custom model may also work through manual selection but require separate performance and output validation. YOLO26 end-to-end, segmentation, pose, classification, and OBB models are not currently supported.
 
-Press **권장 모델 다운로드** and review the Ultralytics model-license notice. NPU 320 pins `3,047,718` bytes and SHA-256 `42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027`; NPU 640 pins `3,085,627` bytes and `b4bdd62de9f07e9b29fd08f3482719d650c853cdfa7230e589770105361259fd`. Dynamic FP32 entries retain the official `ultralytics/assets` v8.4.0 files and hashes. The app validates size, SHA-256, float32 NCHW input, and conventional COCO YOLO output before installation. A failed or cancelled download removes its temporary file, and only a successful download becomes active.
+Press **권장 모델 다운로드** and review the Ultralytics model-license notice. Raw-head NPU 320 pins `3,064,576` bytes and SHA-256 `6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8`; NPU 640 pins `3,064,734` bytes and `156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74`. Dynamic FP32 entries retain the official `ultralytics/assets` v8.4.0 files and hashes. The app validates size, SHA-256, float32 NCHW input, and supported decoded or raw-head output before installation. A failed or cancelled download removes its temporary file, and only a successful download becomes active.
 
 Use **다른 ONNX 파일 선택** when offline or when testing another compatible model. To create the recommended format on a PC, retain `nms=False` and `dynamic=False`:
 
@@ -50,7 +50,7 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 For UI-only validation on an Android x86_64 emulator, add `-PcarrotQnnEnabled=false -PcarrotTargetAbi=x86_64`. Build the real deployment APK without those properties so the default `arm64-v8a` ABI and QNN Runtime remain enabled.
 
-The default build packages ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), and QNN Runtime 2.48.0. It first verifies a full HTP graph with `session.disable_cpu_ep_fallback=1`; if that fails, it opens a mixed QNN+CPU session and uses the ORT profile to confirm actual QNN node execution. The acceleration diagnostics retain the SoC and the full-graph/mixed failure text independently of C3X discovery status. Native QNN libraries are compressed in the APK and extracted at install time, so installed storage can be substantially larger than the APK. Build a smaller NNAPI/CPU-only test APK with:
+The default build packages ONNX Runtime Android 1.26.0, Qualcomm [QNN Plugin EP 2.4.0](https://github.com/onnxruntime/onnxruntime-qnn), and QNN Runtime 2.48.0. Only a full HTP graph or a profiled mixed session with observed HTP execution remains an NPU candidate; unverified mixed sessions are discarded. Acceleration diagnostics retain the SoC, per-backend preflight p50/p95, automatic decision, and full-graph/mixed failure text independently of C3X discovery status. Native QNN libraries are compressed in the APK and extracted at install time, so installed storage can be substantially larger than the APK. Build a smaller NNAPI/CPU-only test APK with:
 
 ```powershell
 .\gradlew.bat :app:assembleDebug -PcarrotQnnEnabled=false
@@ -90,7 +90,7 @@ For a manual fallback, enter the current C3/C3X/C4 address under **기기 IP** a
 
 An NPU model automatically locks **YOLO input size** to 320 or 640, while the inference target remains selectable from 1–20 FPS. Run NPU 320 at 5 FPS for at least 15 minutes before raising it toward 10–15 FPS. The central HUD derives `VIDEO FPS` from C3X source-frame timestamps, shows measured model `AI FPS`, calculates `follow rate` as AI FPS divided by VIDEO FPS, and reports their difference as `SKIP/s`. This avoids falsely reporting 100% when the phone processing loop itself is slow. The live console keeps the newest 40 analysis entries with wall time, frame ID, object name, confidence, and source-image box and center pixel coordinates. Object names use Korean plus the original COCO label when Android's system language is Korean, and the COCO English label otherwise.
 
-The status view separates the rolling 120-sample average and p95 phone time, current H.264/JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. A full or mixed Qualcomm QNN/HTP session, or an NNAPI session that excludes CPU execution, is shown as green `eNPU`; CPU fallback is purple `eCPU`. The badge summarizes the NPU-capable acceleration environment, while the acceleration detail retains the distinction between full QNN, mixed QNN+CPU, unverified QNN placement, and NNAPI together with profiling evidence. If the status contains `QNN fallback`, record the reason and processing time.
+The status view separates the rolling 120-sample average and p95 phone time, current H.264/JPEG decode, preprocessing, ORT runtime, postprocessing, battery temperature, and Android thermal state. The C3X status shows the selected input plus `total latency/AI processing time`. A QNN/HTP, verified QNN+CPU, or NNAPI candidate selected by the automatic comparison is shown as green `eNPU`; selected CPU is purple `eCPU`. Acceleration detail retains every candidate's preflight p50/p95, the automatic decision, QNN profiling evidence, and failure text.
 
 - A large `ORT` value indicates a model or acceleration-backend bottleneck; stay at 320 and check for CPU fallback.
 - A large `total latency - phone time` indicates C3X encoding, Wi-Fi, or return-path delay.
@@ -99,7 +99,7 @@ The status view separates the rolling 120-sample average and p95 phone time, cur
 
 ## Screen-off and power behavior
 
-- Before a device is found, the app does not open the YOLO model or NPU session and does not hold a wake lock or high-performance Wi-Fi lock. Its foreground-service discovery wait increases through 5, 10, and 20 seconds to a 30-second cap. Android or OEM power policy may defer discovery further while the screen is off.
+- Before discovery, the app performs the backend comparison once but does not hold a wake lock or high-performance Wi-Fi lock. Unselected sessions are closed immediately. Its foreground-service discovery wait increases through 5, 10, and 20 seconds to a 30-second cap. Android or OEM power policy may defer discovery further while the screen is off.
 - A recommended-model download runs only after a user presses the button and does not acquire inference wake locks. Performance locks begin only after model installation and device connection.
 - After TCP video connects, a partial wake lock and high-performance Wi-Fi lock keep reception and inference running with the screen off. This is a performance mode, so charging and thermal monitoring are recommended.
 - A disconnect immediately releases both performance locks. Failed connections retry after 1, 2, 4, 8, and 16 seconds, capped at 30 seconds; automatic mode scans again if the address changed.

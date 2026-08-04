@@ -71,7 +71,7 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
   detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
 
-  assert 'versionName = "0.12.2"' in gradle
+  assert 'versionName = "0.13.0"' in gradle
   assert 'providers.gradleProperty("carrotTargetAbi")' in gradle
   assert 'providers.gradleProperty("carrotQnnEnabled")' in gradle
   assert 'implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")' in gradle
@@ -80,7 +80,8 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'buildConfigField("boolean", "QNN_EP_INCLUDED"' in gradle
   assert "jniLibs.useLegacyPackaging = true" in gradle
   assert "BuildConfig.QNN_EP_INCLUDED" in activity
-  assert "Qualcomm QNN/HTP 전체 그래프 → QNN+CPU 혼합 → NNAPI → CPU" in activity
+  assert "QNN/HTP 전체 그래프 · 검증된 QNN+CPU · NNAPI · CPU를 동일 입력으로 비교" in activity
+  assert "p95가 CPU보다 10% 이상 빠르고 p50도 느리지 않은 가속기만 자동 선택" in activity
 
   qnn_setup = detector.split("private fun tryCreateQnnSession", 1)[1].split("private fun createBaseOptions", 1)[0]
   assert 'addConfigEntry("session.disable_cpu_ep_fallback", "1")' in qnn_setup
@@ -106,11 +107,19 @@ def test_android_client_prefers_verified_qnn_htp_before_fallbacks() -> None:
   assert 'input.shape[2] in longArrayOf(-1, 320, 416, 640)' in detector
   service = (JAVA_ROOT / "ExternalAIService.kt").read_text(encoding="utf-8")
   preflight = service.split("private fun runClient", 1)[1].split("while (token.get())", 1)[0]
-  assert "C3X 연결 전 AI 가속 사전 점검 중" in preflight
+  assert "C3X 연결 전 AI 가속 자동 선택 중" in preflight
   assert "YoloDetector(" in preflight
   assert "publishMetrics(" in preflight
-  assert "C3X 연결 없이 더미 입력 예열로 확인" in preflight
+  assert "C3X 연결 없이 동일 입력 p50/p95 비교" in preflight
   assert "preflightSummary" in service
+  selector = (JAVA_ROOT / "BackendAutoSelector.kt").read_text(encoding="utf-8")
+  assert "MINIMUM_SPEEDUP_RATIO = 0.10" in selector
+  assert "accelerator.p95Ms <= requiredP95" in selector
+  assert "accelerator.p50Ms <= cpu.p50Ms" in selector
+  assert "BENCHMARK_WARMUP_RUNS = 2" in detector
+  assert "BENCHMARK_RUNS = 7" in detector
+  assert "QNN 혼합 실행 제외: HTP 실행 증거 없음" in detector
+  assert "사전 벤치마크 p50/p95" in detector
 
 
 def test_android_qnn_models_are_static_pinned_and_default() -> None:
@@ -123,6 +132,8 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
   assert [model["input_size"] for model in manifest["models"]] == [320, 640]
   for model in manifest["models"]:
     path = MODELS_ROOT / model["file"]
+    expected_anchors = sum((model["input_size"] // stride) ** 2 for stride in (8, 16, 32))
+    assert model["file"].endswith("-raw-head-qdq.onnx")
     assert path.stat().st_size == model["size"]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == model["sha256"]
     assert model["activation_type"] == "QUInt16"
@@ -131,6 +142,10 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
     assert model["validation"]["input_shape"] == [1, 3, model["input_size"], model["input_size"]]
     assert not {"ConstantOfShape", "Range", "Shape"}.intersection(model["validation"]["operator_types"])
     assert model["validation"]["outputs"][0]["normalized_rmse"] < 0.06
+    assert model["raw_head"]["output_shape"] == [1, 144, expected_anchors]
+    assert model["raw_head"]["removed_nodes"] == 57
+    assert model["raw_head"]["max_abs_error"] < 0.1
+    assert model["raw_head"]["rmse"] < 0.01
     assert f'expectedSize = {model["size"]:_}L' in downloader
     assert f'expectedSha256 = "{model["sha256"]}"' in downloader
 
@@ -142,8 +157,18 @@ def test_android_qnn_models_are_static_pinned_and_default() -> None:
   assert downloader.count("qnnOptimized = true") == 2
   assert "applyModelInputPolicy" in activity
   assert "activeModel?.fixedInputSize" in activity
+  assert "replacementForLegacyUri" in activity
+  assert '"yolo11n-static-320-w8a16-qdq.onnx" to YOLO11N_QDQ_320' in downloader
+  assert '"yolo11n-static-640-w8a16-qdq.onnx" to YOLO11N_QDQ_640' in downloader
   assert "tryQnn = modelSpec?.qnnOptimized != false" in service
   assert "Dynamic FP32 CPU 호환 모델" in service
+
+  detector = (JAVA_ROOT / "YoloDetector.kt").read_text(encoding="utf-8")
+  assert "channels == RAW_HEAD_CHANNELS" in detector
+  assert "parseRawDflOutput" in detector
+  assert "DFL_BINS = 16" in detector
+  assert "RAW_HEAD_CHANNELS = DFL_BOX_CHANNELS + COCO_CLASS_COUNT" in detector
+  assert "DETECTION_STRIDES = intArrayOf(8, 16, 32)" in detector
 
 
 def test_android_recommended_model_download_is_pinned_and_validated() -> None:
@@ -310,17 +335,17 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "입력 픽셀 수는 320이 640의 1/4",
     "전화 처리 평균과 p95",
     "NCHW 강제 옵션",
-    "QNN/HTP 전체 그래프",
+    "동일 입력으로 사전 측정",
     "session.disable_cpu_ep_fallback",
     "carrotQnnEnabled=false",
     "공식 `ultralytics/assets` v8.4.0 Release",
-    "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
+    "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
     "AGPL-3.0 또는 Enterprise",
     "nms=False dynamic=False batch=1",
     "같은 사설 IPv4 `/24`",
     "JPEG `CAI1` 또는 H.264 `CAI2`",
     "ExternalAIPhoneIP",
-    "YOLO 모델이나 NPU 세션을 열지 않고",
+    "YOLO 백엔드 자동 비교를 한 번 수행",
     "부팅 자동 시작은 하지 않습니다",
   ):
     assert text in readme_ko
@@ -330,16 +355,16 @@ def test_android_readmes_document_discovery_model_selection_and_power() -> None:
     "A 320 input has one quarter of the pixels of 640",
     "average and p95 phone time",
     "does not force the potentially slower NCHW option",
-    "Full-graph Qualcomm QNN/HTP",
+    "Identical-input preflight",
     "session.disable_cpu_ep_fallback",
     "carrotQnnEnabled=false",
     "official `ultralytics/assets` v8.4.0 Release",
-    "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
+    "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
     "AGPL-3.0 or Enterprise",
     "nms=False dynamic=False batch=1",
     "local private IPv4 `/24`",
     "JPEG `CAI1` or H.264 `CAI2`",
-    "does not open the YOLO model or NPU session",
+    "performs the backend comparison once",
     "It does not start at boot",
   ):
     assert text in readme_en

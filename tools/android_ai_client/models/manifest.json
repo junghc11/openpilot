@@ -4,9 +4,9 @@
   "source_sha256": "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b",
   "models": [
     {
-      "file": "yolo11n-static-320-w8a16-qdq.onnx",
-      "size": 3047718,
-      "sha256": "42a8170f1ce782cf87b781eb4f249b6e1d04e5034c4c904179dcbbc721110027",
+      "file": "yolo11n-static-320-w8a16-raw-head-qdq.onnx",
+      "size": 3064576,
+      "sha256": "6982255a239c7d66577378eb6c910c1a333b1151fa1b80f1a114e55d6eefceb8",
       "input_size": 320,
       "activation_type": "QUInt16",
       "weight_type": "QUInt8",
@@ -47,12 +47,23 @@
             "normalized_rmse": 0.05106204375624657
           }
         ]
+      },
+      "raw_head": {
+        "output_name": "/model.23/Concat_6_output_0_DequantizeLinear_Output",
+        "output_shape": [
+          1,
+          144,
+          2100
+        ],
+        "removed_nodes": 57,
+        "max_abs_error": 0.03704833984375,
+        "rmse": 0.0011474475031718612
       }
     },
     {
-      "file": "yolo11n-static-640-w8a16-qdq.onnx",
-      "size": 3085627,
-      "sha256": "b4bdd62de9f07e9b29fd08f3482719d650c853cdfa7230e589770105361259fd",
+      "file": "yolo11n-static-640-w8a16-raw-head-qdq.onnx",
+      "size": 3064734,
+      "sha256": "156184ea20f1ae78753b0ee841e0d4177d3b6b5f61380e993bfe699dbff56b74",
       "input_size": 640,
       "activation_type": "QUInt16",
       "weight_type": "QUInt8",
@@ -93,6 +104,17 @@
             "normalized_rmse": 0.04596736282110214
           }
         ]
+      },
+      "raw_head": {
+        "output_name": "/model.23/Concat_6_output_0_DequantizeLinear_Output",
+        "output_shape": [
+          1,
+          144,
+          8400
+        ],
+        "removed_nodes": 57,
+        "max_abs_error": 0.06732177734375,
+        "rmse": 0.0019880158361047506
       }
     }
   ]
